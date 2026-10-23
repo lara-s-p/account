@@ -25,6 +25,8 @@ import { fechaCorta } from "@/lib/fechas";
 import { leerGoogleDoc } from "@/lib/google-docs";
 import { comentarIssue, crearIssue, ErrorJira, issuesAbiertos, jiraConfigurado, urlIssue } from "@/lib/jira";
 import { idCanal, publicarEnSlack, slackConfigurado } from "@/lib/slack";
+import { crearTarjetaMinuta, idTablero, trelloConfigurado } from "@/lib/trello";
+import { sincronizarJira } from "@/lib/sync-jira";
 import { procesarMinutaConClaude } from "@/lib/minuta";
 import { requerirUsuario } from "@/lib/sesion";
 import { claveNombre, formatoId } from "@/lib/texto";
@@ -302,6 +304,8 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
         compromisosCliente: resultado.tareas.filter((t) => t.responsable === "Cliente").map((t) => t.titulo),
         oportunidades: resultado.oportunidades,
         riesgos: resultado.riesgos,
+        minutaCompleta: resultado.minuta_completa,
+        resumenSlack: resultado.resumen_slack,
         tonoCliente: resultado.tono_cliente,
         creadoPor: usuario.email,
       });
@@ -334,6 +338,9 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
         );
       }
     });
+    // Trello y Slack: si fallan no se pierde la minuta; el problema queda anotado en la reunión.
+    const avisos = await publicarMinuta(cliente, idReunion, fecha, resultado.minuta_completa, resultado.resumen_slack);
+    if (avisos.length) await db.update(reuniones).set({ avisos }).where(eq(reuniones.id, idReunion));
     revalidatePath("/reuniones");
     revalidatePath(`/clientes/${clienteId}`);
     redirect(`/bandeja#${idReunion}`);
@@ -342,6 +349,34 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
     console.error("Error al procesar la minuta", e);
     return { error: e instanceof Error ? e.message : "No se pudo procesar la minuta. Probá de nuevo." };
   }
+}
+
+/** Crea la tarjeta de la minuta en Trello y publica el resumen en el canal de Slack del cliente. Devuelve los problemas. */
+async function publicarMinuta(cliente: typeof clientes.$inferSelect, reunionId: string, fecha: string, minutaCompleta: string, resumen: string) {
+  const db = await getDb();
+  const avisos: string[] = [];
+  const tablero = idTablero(cliente.trelloTablero);
+  if (!trelloConfigurado()) avisos.push("Trello no está conectado: no se creó la tarjeta de la minuta.");
+  else if (!tablero) avisos.push(`${cliente.nombre} no tiene tablero de Trello en la ficha: no se creó la tarjeta.`);
+  else {
+    try {
+      const url = await crearTarjetaMinuta(tablero, `${cliente.nombre} - ${fechaCorta(fecha)}`, minutaCompleta);
+      await db.update(reuniones).set({ minutaTrello: url }).where(eq(reuniones.id, reunionId));
+    } catch (e) {
+      avisos.push(`Trello: ${e instanceof Error ? e.message : "no se pudo crear la tarjeta."}`);
+    }
+  }
+  const canal = idCanal(cliente.slackCanal);
+  if (!slackConfigurado()) avisos.push("Slack no está conectado: no se publicó el resumen.");
+  else if (!canal) avisos.push(`${cliente.nombre} no tiene canal de Slack en la ficha: no se publicó el resumen.`);
+  else {
+    try {
+      await publicarEnSlack(canal, `*Minuta del ${fechaCorta(fecha)}*\n${resumen}`);
+    } catch (e) {
+      avisos.push(`Slack: ${e instanceof Error ? e.message : "no se pudo publicar el resumen."}`);
+    }
+  }
+  return avisos;
 }
 
 /** Aplica la misma decisión a todas las tareas pendientes de una reunión. */
@@ -480,4 +515,14 @@ export async function enviarTareas(grupo: { clienteId: string; reunionId: string
   if (reunion) revalidatePath(`/reuniones/${reunion.id}`);
   revalidatePath(`/clientes/${cliente.id}`);
   return resultado;
+}
+
+/* ===================== Jira → plataforma ===================== */
+
+export async function sincronizarAhora() {
+  await requerirUsuario();
+  const resumen = await sincronizarJira();
+  revalidatePath("/tareas");
+  revalidatePath("/");
+  return resumen;
 }

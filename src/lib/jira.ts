@@ -89,3 +89,73 @@ export async function crearIssue(datos: {
 export async function comentarIssue(key: string, texto: string): Promise<void> {
   await jira(`/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { method: "POST", body: JSON.stringify({ body: adf(texto) }) });
 }
+
+export type DatosIssue = {
+  key: string;
+  estado: string;
+  categoria: "new" | "indeterminate" | "done" | string;
+  vencimiento: string | null;
+  resuelta: string | null;
+  creada: string | null;
+  responsableAccountId: string | null;
+};
+
+type IssueApi = {
+  key: string;
+  fields: {
+    status: { name: string; statusCategory: { key: string } };
+    duedate: string | null;
+    resolutiondate: string | null;
+    created: string | null;
+    assignee: { accountId: string } | null;
+  };
+};
+
+async function buscarLote(claves: string[]): Promise<IssueApi[]> {
+  const r = await jira<{ issues: IssueApi[] }>("/rest/api/3/search/jql", {
+    method: "POST",
+    body: JSON.stringify({
+      jql: `key in (${claves.join(",")})`,
+      fields: ["status", "duedate", "resolutiondate", "created", "assignee"],
+      maxResults: claves.length,
+    }),
+  });
+  return r.issues;
+}
+
+/**
+ * Trae el estado de muchos issues en lotes de 100.
+ * Si un lote falla porque alguna clave ya no existe (Jira rechaza toda la búsqueda), se parte en dos
+ * hasta aislarla; las claves que no existen se devuelven aparte.
+ */
+export async function datosDeIssues(claves: string[]): Promise<{ issues: DatosIssue[]; inexistentes: string[] }> {
+  const issues: IssueApi[] = [];
+  const inexistentes: string[] = [];
+  async function procesar(lote: string[]): Promise<void> {
+    try {
+      issues.push(...(await buscarLote(lote)));
+    } catch (e) {
+      if (!(e instanceof ErrorJira) || !/ 400:/.test(e.message)) throw e;
+      if (lote.length === 1) {
+        inexistentes.push(lote[0]);
+        return;
+      }
+      const mitad = Math.ceil(lote.length / 2);
+      await procesar(lote.slice(0, mitad));
+      await procesar(lote.slice(mitad));
+    }
+  }
+  for (let i = 0; i < claves.length; i += 100) await procesar(claves.slice(i, i + 100));
+  return {
+    inexistentes,
+    issues: issues.map((i) => ({
+      key: i.key,
+      estado: i.fields.status.name,
+      categoria: i.fields.status.statusCategory.key,
+      vencimiento: i.fields.duedate,
+      resuelta: i.fields.resolutiondate,
+      creada: i.fields.created,
+      responsableAccountId: i.fields.assignee?.accountId ?? null,
+    })),
+  };
+}

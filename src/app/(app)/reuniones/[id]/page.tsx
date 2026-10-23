@@ -63,7 +63,20 @@ export default async function ReunionPage({ params }: { params: Promise<{ id: st
             Abrir minuta
           </a>
         )}
+        {reunion.minutaTrello && (
+          <a href={reunion.minutaTrello} target="_blank" rel="noreferrer" className="boton-secundario">
+            Ver en Trello
+          </a>
+        )}
       </Encabezado>
+
+      {reunion.avisos.length > 0 && (
+        <div className="mb-6 grid gap-1 rounded-lg bg-alerta-suave px-4 py-3 text-sm text-alerta">
+          {reunion.avisos.map((a) => (
+            <p key={a}>{a}</p>
+          ))}
+        </div>
+      )}
 
       <div className="mb-6 grid gap-6 lg:grid-cols-3">
         <section className="panel grid content-start gap-4 p-5 lg:col-span-2">
@@ -120,6 +133,23 @@ export default async function ReunionPage({ params }: { params: Promise<{ id: st
           )}
         </section>
       </div>
+
+      {(reunion.minutaCompleta || reunion.resumenSlack) && (
+        <div className="mb-6 grid gap-3 lg:grid-cols-2">
+          {reunion.minutaCompleta && (
+            <details className="panel p-5">
+              <summary className="cursor-pointer font-bold">Minuta completa (Trello)</summary>
+              <div className="mt-3 text-sm whitespace-pre-wrap">{reunion.minutaCompleta}</div>
+            </details>
+          )}
+          {reunion.resumenSlack && (
+            <details className="panel p-5">
+              <summary className="cursor-pointer font-bold">Resumen publicado en Slack</summary>
+              <div className="mt-3 text-sm whitespace-pre-wrap">{reunion.resumenSlack}</div>
+            </details>
+          )}
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>

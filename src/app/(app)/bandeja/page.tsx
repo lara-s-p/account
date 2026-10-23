@@ -75,6 +75,13 @@ export default async function Bandeja() {
                   <BotonEnviar clienteId={g.cliente.id} cliente={g.cliente.nombre} reunionId={g.reunion?.id ?? null} aprobadas={aprobadas} />
                 </div>
               </div>
+              {g.reunion && g.reunion.avisos.length > 0 && (
+                <div className="grid gap-0.5 rounded-lg bg-alerta-suave px-3 py-2 text-xs text-alerta">
+                  {g.reunion.avisos.map((a) => (
+                    <p key={a}>{a}</p>
+                  ))}
+                </div>
+              )}
               <div className="panel overflow-x-auto">
                 <table className="tabla">
                   <CabeceraTareas />

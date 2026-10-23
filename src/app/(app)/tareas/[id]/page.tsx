@@ -38,6 +38,8 @@ export default async function TareaPage({ params }: { params: Promise<{ id: stri
   const hoy = hoyISO();
   const creada = tarea.creadoEn.toISOString().slice(0, 10);
   const abierta = tarea.decision === "Cargar" && ["Por hacer", "En curso", "Bloqueada"].includes(tarea.estado);
+  // Las importadas del sheet tienen fecha real de creación recién cuando se sincronizan con Jira.
+  const fechaConocida = tarea.origen !== "sheet" || Boolean(tarea.estadoJira);
 
   return (
     <div className="max-w-5xl">
@@ -71,9 +73,9 @@ export default async function TareaPage({ params }: { params: Promise<{ id: stri
                 "Creada a mano"
               )}
             </Dato>
-            <Dato etiqueta="Creada">{tarea.origen === "sheet" ? "Antes de la plataforma" : fechaCorta(creada)}</Dato>
+            <Dato etiqueta="Creada">{fechaConocida ? fechaCorta(creada) : "Antes de la plataforma"}</Dato>
             <Dato etiqueta={abierta ? "Abierta hace" : "Decidida"}>
-              {abierta && tarea.origen !== "sheet" ? `${diasEntre(creada, hoy)} días` : tarea.fechaDecision ? fechaHora(tarea.fechaDecision) : null}
+              {abierta && fechaConocida ? `${diasEntre(creada, hoy)} días` : tarea.fechaDecision ? fechaHora(tarea.fechaDecision) : null}
             </Dato>
             <Dato etiqueta="Jira">
               {tarea.jiraKey && (

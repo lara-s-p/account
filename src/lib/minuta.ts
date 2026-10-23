@@ -19,19 +19,23 @@ export type MinutaProcesada = {
   decisiones: string[];
   oportunidades: string[];
   riesgos: string[];
+  minuta_completa: string;
+  resumen_slack: string;
   tareas: TareaExtraida[];
 };
 
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["resumen", "tono_cliente", "decisiones", "oportunidades", "riesgos", "tareas"],
+  required: ["resumen", "tono_cliente", "decisiones", "oportunidades", "riesgos", "minuta_completa", "resumen_slack", "tareas"],
   properties: {
     resumen: { type: "string" },
     tono_cliente: { type: "string", enum: ["Positivo", "Neutral", "Preocupado", "Molesto"] },
     decisiones: { type: "array", items: { type: "string" } },
     oportunidades: { type: "array", items: { type: "string" } },
     riesgos: { type: "array", items: { type: "string" } },
+    minuta_completa: { type: "string" },
+    resumen_slack: { type: "string" },
     tareas: {
       type: "array",
       items: {
@@ -88,6 +92,8 @@ Devolvé:
 - decisiones: lo que se decidió en la reunión.
 - oportunidades: oportunidades de upsell o de nuevos servicios que surjan (por ejemplo, el cliente menciona una necesidad que cubre un servicio que no tiene contratado). Lista vacía si no hay.
 - riesgos: señales de alerta (insatisfacción, demoras, caída de resultados, recortes de presupuesto, temas para escalar a la dirección). Lista vacía si no hay.
+- minuta_completa: la minuta depurada y ordenada para guardar en Trello, en Markdown. Secciones con "## ": Participantes (si figuran), Temas tratados (un "### " por tema con lo que se habló y los datos o números mencionados), Decisiones, Próximos pasos de Known (con responsable y fecha si se dijo), Pendientes del cliente. Completa pero sin repetir ni agregar nada que no esté en la minuta.
+- resumen_slack: versión corta para el canal de Slack del cliente, en el formato de Slack (*negrita* con un asterisco, viñetas con "• "). Primero 2 o 3 líneas de lo hablado, después "*Próximos pasos de Known*" y "*Pendientes de ${opts.cliente}*" con una viñeta por tarea (con fecha si hay). Sin riesgos, oportunidades ni comentarios internos: lo puede leer el cliente.
 - tareas: cada acción concreta que surgió.
   - responsable "Known" si la hace el equipo de la agencia, "Cliente" si es algo que el cliente se comprometió a entregar o hacer.
   - titulo: corto, empieza con un verbo en infinitivo (por ejemplo "Enviar propuesta de keywords").

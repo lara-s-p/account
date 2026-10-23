@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { BotonSincronizar } from "@/components/BotonSincronizar";
 import { Encabezado } from "@/components/Etiquetas";
 import { CabeceraTareas, FilaTarea } from "@/components/FilaTarea";
 import { DECISIONES, ESTADOS_TAREA, RESPONSABLES } from "@/db/schema";
 import { listarAnalistas, listarClientesSimple, listarTareas, POR_PAGINA, type FiltrosTareas } from "@/lib/consultas";
-import { hoyISO } from "@/lib/fechas";
+import { fechaHora, hoyISO } from "@/lib/fechas";
+import { jiraConfigurado } from "@/lib/jira";
+import { ultimaSincronizacion } from "@/lib/sync-jira";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Tareas" };
@@ -31,7 +34,12 @@ export default async function Tareas({ searchParams }: { searchParams: Promise<P
     q: p.q,
     pagina: Number(p.pagina) || 1,
   };
-  const [{ filas, total, pagina }, analistas, clientes] = await Promise.all([listarTareas(filtros), listarAnalistas(), listarClientesSimple()]);
+  const [{ filas, total, pagina }, analistas, clientes, ultima] = await Promise.all([
+    listarTareas(filtros),
+    listarAnalistas(),
+    listarClientesSimple(),
+    ultimaSincronizacion(),
+  ]);
   const hoy = hoyISO();
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const url = (cambios: Params) => {
@@ -46,6 +54,10 @@ export default async function Tareas({ searchParams }: { searchParams: Promise<P
           Nueva tarea
         </Link>
       </Encabezado>
+
+      <div className="mb-4">
+        <BotonSincronizar ultima={ultima} cuandoUltima={ultima ? fechaHora(ultima.fecha) : null} conectado={jiraConfigurado()} />
+      </div>
 
       <nav className="mb-4 flex flex-wrap gap-1" aria-label="Vistas">
         {VISTAS.map((v) => (
@@ -108,7 +120,7 @@ export default async function Tareas({ searchParams }: { searchParams: Promise<P
 
       {vista === "abiertas" && !p.cliente && total === 0 && (
         <p className="mb-4 rounded-lg bg-alerta-suave px-4 py-3 text-sm text-alerta">
-          Las tareas importadas del sheet figuran como &quot;Sin seguimiento&quot; porque todavía no se sabe su estado en Jira. Las tareas nuevas que se carguen desde las minutas sí aparecen acá.
+          Las tareas importadas del sheet figuran como &quot;Sin seguimiento&quot; hasta que se sincronicen con Jira. Las tareas que se envían desde la bandeja sí aparecen acá.
         </p>
       )}
 

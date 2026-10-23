@@ -111,6 +111,10 @@ export const reuniones = pgTable(
     compromisosCliente: text("compromisos_cliente").array().notNull().default(sql`'{}'::text[]`),
     oportunidades: text("oportunidades").array().notNull().default(sql`'{}'::text[]`),
     riesgos: text("riesgos").array().notNull().default(sql`'{}'::text[]`),
+    minutaCompleta: text("minuta_completa"),
+    resumenSlack: text("resumen_slack"),
+    // Problemas al crear la tarjeta de Trello o publicar en Slack (no frenan la carga de la minuta).
+    avisos: text("avisos").array().notNull().default(sql`'{}'::text[]`),
     tonoCliente: text("tono_cliente"),
     origen: text("origen").notNull().default("plataforma"), // plataforma | sheet
     creadoPor: text("creado_por"),
@@ -197,6 +201,13 @@ export const estadosSemanales = pgTable(
   },
   (t) => [uniqueIndex("estados_semanales_cliente_semana").on(t.clienteId, t.semana)]
 );
+
+/** Datos sueltos de funcionamiento, por ejemplo la última sincronización con Jira. */
+export const ajustes = pgTable("ajustes", {
+  clave: text("clave").primaryKey(),
+  valor: jsonb("valor").$type<Record<string, unknown>>().notNull().default({}),
+  actualizadoEn: timestamp("actualizado_en", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export type Cliente = typeof clientes.$inferSelect;
 export type Analista = typeof analistas.$inferSelect;
