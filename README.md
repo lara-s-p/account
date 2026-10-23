@@ -10,9 +10,12 @@ Plataforma del área de Account MKT de Known Online. Reemplaza al sheet "Automat
 - **Estado desde Jira**: las tareas con issue (las del sheet incluidas) toman su estado de Jira: al instante con el webhook, todos los días con la tarea programada, o con "Sincronizar ahora" en Tareas. También se actualizan la fecha de cierre, el vencimiento y el analista si se reasignó, y cada cambio queda en el historial como hecho por "Jira".
 - **Trello y Slack al procesar la minuta**: Claude arma la minuta completa (se crea una tarjeta "Cliente - fecha" en la lista "Minutas" del tablero del cliente) y un resumen con los pendientes de cada lado (se publica en el canal de Slack del cliente). Si algo falla, la minuta se carga igual y el problema queda anotado en la reunión.
 - **Tareas**: vistas de abiertas, vencidas, sin fecha y sin decidir, con filtros. Decisión, analista, etiqueta, prioridad, fecha límite y estado se editan en la tabla. Cada cambio queda en el historial de la tarea, junto con los comentarios.
+- **Estado semanal**: cada lunes Claude analiza a cada cliente activo con sus reuniones, tareas, pendientes, historial de semanas anteriores y las notas del account, y propone el semáforo en la escala de 6 niveles de la planilla (de "Cliente estable" a "Riesgo crítico"), el motivo, los problemas, el foco de la semana, las oportunidades de upsell y lo que tiene que saber la dirección. El account puede ajustar el nivel: queda registrado quién lo cambió y qué proponía Claude. Cada cliente tiene su historial semana a semana; el punto de partida es la pestaña "Semáforo" de la planilla de Gestión Interna.
+- **Alerta de los lunes**: a las 9 se publica en el canal interno de accounts un mensaje corto, agrupado por account, solo con los clientes en amarillo o rojo (o que empeoraron mucho) y un link al análisis completo.
+- **Propuesta de ficha**: para clientes sin blueprint, Claude arma un borrador de industria, descripción, objetivos y competidores con sus tareas, reuniones, notas, sitio web y Blueprint (si está en Google Sheets). El account lo revisa antes de guardarlo.
 - **Inicio**: números del día y los clientes que conviene atender primero.
 
-Próximas etapas: alerta semanal de los lunes, estado semanal por cliente (semáforo, problemas, foco, upsell y temas para la dirección), objetivos mensuales, informe pre-reunión, sincronización con Jira y Trello, y alertas en Slack.
+Próximas etapas: métricas de las cuentas (Paid, SEO, Email y redes) en el análisis semanal, objetivos mensuales e informe pre-reunión.
 
 ## Tecnología
 
@@ -48,7 +51,7 @@ Las tareas del sheet entran como "Sin seguimiento" porque el sheet no guarda su 
 2. **Base de datos**: en el proyecto, Storage > Create Database > Neon (Postgres). Vercel agrega `DATABASE_URL` sola. Las tablas se crean en cada build (`scripts/migrar.ts`).
 3. **Login con Google**: en Google Cloud Console > APIs y servicios:
    - Pantalla de consentimiento: tipo **Interno** (solo cuentas de la organización).
-   - Habilitar la **Google Docs API**.
+   - Habilitar la **Google Docs API** y la **Google Sheets API** (minutas y blueprints).
    - Credenciales > ID de cliente OAuth > Aplicación web. URI de redirección: `https://<tu-dominio>.vercel.app/api/auth/callback/google`.
 4. **Variables de entorno** (Settings > Environment Variables):
    - `AUTH_SECRET`: un valor al azar (`npx auth secret` o `openssl rand -base64 32`).
@@ -58,7 +61,9 @@ Las tareas del sheet entran como "Sin seguimiento" porque el sheet no guarda su 
    - `JIRA_EMAIL` y `JIRA_TOKEN`: el usuario con el que se crean las tareas y su token de API (`JIRA_BASE` ya apunta a knownonline.atlassian.net).
    - `SLACK_TOKEN`: el token del bot de Slack (`xoxb-…`), con permiso `chat:write` y agregado a los canales de los clientes.
    - `TRELLO_KEY` y `TRELLO_TOKEN`: de trello.com/power-ups/admin, con un usuario que tenga acceso a los tableros de los clientes.
-   - `CRON_SECRET`: un valor al azar. Vercel lo usa para la sincronización diaria con Jira (`vercel.json`, 6 a. m. de Argentina). En el plan Pro se puede pasar a cada hora.
+   - `CRON_SECRET`: un valor al azar. Vercel lo usa para la tarea programada diaria (`vercel.json`, 9 a. m. de Argentina): todos los días sincroniza con Jira y los lunes además arma el estado semanal y publica la alerta.
+   - `SLACK_CANAL_ACCOUNTS`: el canal interno de accounts (su link de Slack o su ID), con el bot invitado.
+   - `APP_URL`: la dirección de la plataforma (por ejemplo `https://account-known.vercel.app`), para el link de la alerta.
    - `JIRA_WEBHOOK_SECRET`: un valor al azar para el webhook de Jira.
 5. **Deploy** y después importar el sheet a la base de producción (ver arriba).
 6. **Webhook de Jira** (para ver los cambios al instante): en Jira, Configuración del sistema > Webhooks > Crear. URL `https://<tu-dominio>/api/jira/webhook?secreto=<JIRA_WEBHOOK_SECRET>`, evento "Issue: updated". Lo tiene que crear un administrador de Jira.

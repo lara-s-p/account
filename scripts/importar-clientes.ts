@@ -16,7 +16,7 @@
 import ExcelJS from "exceljs";
 import { eq } from "drizzle-orm";
 import { conectar } from "../src/db/conexion";
-import { analistas, clientes, CODIGOS_SERVICIO, type Contacto } from "../src/db/schema";
+import { analistas, clientes, CODIGOS_SERVICIO, estadosSemanales, NIVELES, type Contacto } from "../src/db/schema";
 import { claveNombre, formatoId, limpiar, numeroDeId } from "../src/lib/texto";
 import { valorCelda } from "./excel";
 
@@ -33,7 +33,18 @@ const EQUIVALENCIAS: Record<string, string> = {
   chaide: "chaide chaide",
   "manar - molderil": "manar molderil",
   "bratopia/french": "bratopia / french postcard",
+  // Pestaña "Semáforo"
+  "121- estee lauder (mac, estee lauder, clinique)": "121 - cela (esteelauder / mac / clinique)",
+  ko: "known online",
+  "manar y molderil": "manar molderil",
+  "profar b2c": "profar",
+  "solidez empresarial": "solidez empresarial (comercial depor peru)",
+  "cordiez ar": "cordiez",
+  "mitiga solutions": "mitiga",
 };
+
+/** Fecha de la última actualización general de la pestaña "Semáforo" (las notas más recientes son del 31/3). */
+const SEMANA_PLANILLA = "2026-03-30";
 
 const VACIOS = new Set(["n/a", "-", "no tiene", "no posee", "no", ""]);
 const texto = (v: unknown) => {
@@ -233,6 +244,51 @@ async function main() {
     }
   }
 
+  /* ---------- Semáforo: punto de partida del historial ---------- */
+  const semaforo = wb.getWorksheet("Semáforo");
+  const sinCoincidencia: string[] = [];
+  let estadosImportados = 0;
+  if (semaforo) {
+    for (let n = 2; n <= semaforo.rowCount; n++) {
+      const fila = semaforo.getRow(n);
+      const v = (i: number) => valorCelda(fila.getCell(i).value);
+      const nombre = limpiar(v(1));
+      if (!nombre) continue;
+      const k = claveNombre(nombre);
+      const destinos = k === "anura ar/pe" ? ["anura argentina", "anura peru"] : [EQUIVALENCIAS[k] ?? k];
+      const encontrados = destinos.map((d) => porClave.get(d) ?? buscar(d)).filter((c): c is NonNullable<typeof c> => Boolean(c));
+      if (!encontrados.length) {
+        sinCoincidencia.push(nombre);
+        continue;
+      }
+      const estado = limpiar(v(2));
+      const nivel = NIVELES.find((x) => claveNombre(x.nombre) === claveNombre(estado) || (claveNombre(estado) === "cliente estable con algun detalle" && x.nivel === 2));
+      const historico = limpiar(v(3));
+      const motivo = limpiar(v(4));
+      const notas = limpiar(v(5));
+      const contexto = [historico && `Histórico: ${historico}`, motivo && `Motivo del estado: ${motivo}`, notas && `Notas de seguimiento:\n${notas}`].filter(Boolean).join("\n\n") || null;
+      for (const c of encontrados) {
+        if (contexto) await db.update(clientes).set({ contextoHistorico: contexto }).where(eq(clientes.id, c.id));
+        if (!nivel) continue;
+        const datos = {
+          clienteId: c.id,
+          semana: SEMANA_PLANILLA,
+          nivel: nivel.nivel,
+          semaforo: nivel.nombre,
+          motivo: motivo ?? historico,
+          resumen: notas ? notas.slice(0, 1500) : null,
+          origen: "planilla",
+          creadoPor: "Planilla de Gestión Interna",
+        };
+        await db
+          .insert(estadosSemanales)
+          .values(datos)
+          .onConflictDoUpdate({ target: [estadosSemanales.clienteId, estadosSemanales.semana], set: { ...datos, actualizadoEn: new Date() } });
+        estadosImportados++;
+      }
+    }
+  }
+
   // Clientes de la plataforma que no figuran en la planilla: quedan como estaban, para revisar.
   const enPlanilla = new Set<string>();
   for (let n = 4; n <= hoja.rowCount; n++) {
@@ -244,6 +300,8 @@ async function main() {
 
   console.log("Fichas completadas:", { actualizados: resumen.actualizados, creados: resumen.creados, activosEnPlanilla: resumen.activos, inactivosEnPlanilla: resumen.inactivos });
   if (fuera.length) console.log("En la plataforma pero no en la planilla (quedan sin cambios):", fuera.map((c) => c.nombre).join(", "));
+  console.log(`Semáforo de la planilla: ${estadosImportados} estados importados como punto de partida del historial.`);
+  if (sinCoincidencia.length) console.log("Del Semáforo sin cliente en la plataforma:", sinCoincidencia.join(", "));
   if (resumen.noEstanEnPlataforma.length) console.log("Inactivos de la planilla que no se crean:", resumen.noEstanEnPlataforma.join(", "));
   if (analistasNoEncontrados.size) console.log("Analistas de la planilla sin coincidencia en la plataforma:", [...analistasNoEncontrados].join(", "));
   if (resumen.clavesJiraDistintas.length) console.log("Proyecto de Jira distinto entre el sheet y la planilla:\n  " + resumen.clavesJiraDistintas.join("\n  "));

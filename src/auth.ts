@@ -17,8 +17,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       authorization: {
         params: {
-          // documents.readonly permite leer las minutas de Google Docs con la cuenta de quien carga la reunión.
-          scope: "openid email profile https://www.googleapis.com/auth/documents.readonly",
+          // Solo lectura de Docs (minutas) y Sheets (blueprints), con la cuenta de quien usa la plataforma.
+          scope: "openid email profile https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly",
           hd: DOMINIO,
           prompt: "select_account",
         },

@@ -26,3 +26,10 @@ export function fechaHora(fecha: Date | string | null | undefined): string {
   if (!fecha) return "—";
   return new Intl.DateTimeFormat("es-AR", { timeZone: ZONA, dateStyle: "short", timeStyle: "short" }).format(new Date(fecha));
 }
+
+/** Lunes de la semana de una fecha (YYYY-MM-DD). */
+export function lunesDe(iso: string): string {
+  const d = new Date(iso + "T12:00:00Z");
+  const dia = d.getUTCDay(); // 0 domingo
+  return sumarDias(iso, dia === 0 ? -6 : 1 - dia);
+}

@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import {
   ACCIONES_JIRA,
+  estadosSemanales,
+  NIVELES,
   analistas,
   clientes,
   DECISIONES,
@@ -27,6 +29,9 @@ import { comentarIssue, crearIssue, ErrorJira, issuesAbiertos, jiraConfigurado, 
 import { idCanal, publicarEnSlack, slackConfigurado } from "@/lib/slack";
 import { crearTarjetaMinuta, idTablero, trelloConfigurado } from "@/lib/trello";
 import { sincronizarJira } from "@/lib/sync-jira";
+import { generarEstado, generarSemana } from "@/lib/semana";
+import { enviarAlerta } from "@/lib/alerta";
+import { proponerFicha, type PropuestaFicha } from "@/lib/propuesta-ficha";
 import { procesarMinutaConClaude } from "@/lib/minuta";
 import { requerirUsuario } from "@/lib/sesion";
 import { claveNombre, formatoId } from "@/lib/texto";
@@ -525,4 +530,78 @@ export async function sincronizarAhora() {
   revalidatePath("/tareas");
   revalidatePath("/");
   return resumen;
+}
+
+/* ===================== Estado semanal ===================== */
+
+export async function generarEstadosSemana(semana: string) {
+  await requerirUsuario();
+  const r = await generarSemana(semana, { limiteMs: 270_000 });
+  revalidatePath("/semana");
+  return r;
+}
+
+export async function analizarClienteSemana(clienteId: string, semana: string): Promise<{ error?: string }> {
+  await requerirUsuario();
+  const db = await getDb();
+  const [cliente] = await db.select().from(clientes).where(eq(clientes.id, clienteId));
+  if (!cliente) return { error: "El cliente no existe." };
+  try {
+    await generarEstado(cliente, semana, { pisarAjustes: true });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "No se pudo analizar el cliente." };
+  }
+  revalidatePath("/semana");
+  revalidatePath(`/clientes/${clienteId}`);
+  return {};
+}
+
+/** El account corrige el nivel o el motivo: queda registrado quién lo ajustó y qué había propuesto Claude. */
+export async function ajustarEstado(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const clienteId = texto(fd, "clienteId");
+  const semana = texto(fd, "semana");
+  const nivel = Number(texto(fd, "nivel"));
+  const motivo = texto(fd, "motivo");
+  const info = NIVELES.find((n) => n.nivel === nivel);
+  if (!clienteId || !semana || !info) return { error: "Elegí un nivel." };
+  const [previo] = await db.select().from(estadosSemanales).where(and(eq(estadosSemanales.clienteId, clienteId), eq(estadosSemanales.semana, semana)));
+  if (previo) {
+    await db
+      .update(estadosSemanales)
+      .set({
+        nivel,
+        semaforo: info.nombre,
+        motivo: motivo ?? previo.motivo,
+        nivelSugerido: previo.origen === "ia" ? (previo.nivelSugerido ?? previo.nivel) : previo.nivelSugerido,
+        ajustadoPor: usuario.nombre,
+        actualizadoEn: new Date(),
+      })
+      .where(eq(estadosSemanales.id, previo.id));
+  } else {
+    await db.insert(estadosSemanales).values({ clienteId, semana, nivel, semaforo: info.nombre, motivo, origen: "manual", ajustadoPor: usuario.nombre, creadoPor: usuario.nombre });
+  }
+  revalidatePath("/semana");
+  revalidatePath(`/clientes/${clienteId}`);
+  return { ok: "Semáforo actualizado." };
+}
+
+export async function enviarAlertaAhora(semana: string) {
+  await requerirUsuario();
+  return enviarAlerta(semana);
+}
+
+/* ===================== Propuesta de ficha ===================== */
+
+export async function proponerFichaAccion(clienteId: string): Promise<{ propuesta?: PropuestaFicha; error?: string }> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const [cliente] = await db.select().from(clientes).where(eq(clientes.id, clienteId));
+  if (!cliente) return { error: "El cliente no existe." };
+  try {
+    return { propuesta: await proponerFicha(cliente, usuario.googleAccessToken) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "No se pudo armar la propuesta." };
+  }
 }

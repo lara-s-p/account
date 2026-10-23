@@ -1,15 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Dato, Encabezado, Pill, PillCliente, PillDecision, PillEstado } from "@/components/Etiquetas";
+import { BotonAnalizarCliente, FormAjuste } from "@/components/AccionesSemana";
 import { FormCliente } from "@/components/FormCliente";
+import { PropuestaFicha } from "@/components/PropuestaFicha";
+import { PillNivel, Tendencia } from "@/components/Semaforo";
 import { listarAnalistas, listarClientes, listarReuniones, listarTareas, obtenerCliente } from "@/lib/consultas";
-import { diasEntre, fechaCorta, hoyISO } from "@/lib/fechas";
+import { diasEntre, fechaCorta, fechaHora, hoyISO, lunesDe } from "@/lib/fechas";
+import { historialCliente } from "@/lib/semana";
 import { completitudFicha } from "@/lib/ficha";
 
 export const dynamic = "force-dynamic";
 
 const PESTANAS = [
   { id: "resumen", texto: "Resumen" },
+  { id: "historial", texto: "Historial y semáforo" },
   { id: "ficha", texto: "Ficha" },
   { id: "reuniones", texto: "Reuniones" },
 ];
@@ -27,13 +32,17 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
 
   const ficha = completitudFicha(cliente);
   const hoy = hoyISO();
-  const [todos, reunionesCliente, abiertas, sinDecidir, analistas] = await Promise.all([
+  const [todos, reunionesCliente, abiertas, sinDecidir, analistas, historial] = await Promise.all([
     listarClientes(),
     listarReuniones({ clienteId: id, limite: 100 }),
     listarTareas({ cliente: id, vista: "abiertas" }),
     listarTareas({ cliente: id, vista: "sin-decidir" }),
     listarAnalistas(),
+    historialCliente(id),
   ]);
+  const semanaActual = lunesDe(hoy);
+  const estadoActual = historial.find((h) => h.semana === semanaActual);
+  const ultimoEstado = historial[0];
   const metricas = todos.find((c) => c.cliente.id === id)!;
   const accounts = [...new Set(todos.map((c) => c.cliente.account).filter((a): a is string => !!a))].sort();
   const dias = metricas.ultimaReunion ? diasEntre(metricas.ultimaReunion, hoy) : null;
@@ -46,6 +55,11 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
         detalle={
           <span className="flex flex-wrap items-center gap-2">
             <PillCliente valor={cliente.estado} />
+            {ultimoEstado && (
+              <Link href={`/clientes/${id}?tab=historial`} title={`Semana del ${fechaCorta(ultimoEstado.semana)}`}>
+                <PillNivel nivel={ultimoEstado.nivel} />
+              </Link>
+            )}
             <span>{cliente.id}</span>
             {cliente.account && <span>· Account: {cliente.account}</span>}
             <Pill tono={ficha.porcentaje === 100 ? "ok" : "alerta"}>Ficha {ficha.porcentaje}%</Pill>
@@ -73,11 +87,96 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
         </Link>
       </nav>
 
+      {tab === "historial" && (
+        <div className="grid max-w-4xl gap-6">
+          <section className="panel grid gap-4 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold">Semana del {fechaCorta(semanaActual)}</h2>
+                <p className="text-sm text-suave">
+                  {estadoActual
+                    ? estadoActual.ajustadoPor
+                      ? `Ajustado por ${estadoActual.ajustadoPor}.`
+                      : "Propuesto por Claude: si no coincide con lo que ves, ajustalo."
+                    : "Todavía no hay análisis de esta semana."}
+                </p>
+              </div>
+              <BotonAnalizarCliente clienteId={id} semana={semanaActual} existe={Boolean(estadoActual)} />
+            </div>
+            <FormAjuste clienteId={id} semana={semanaActual} nivel={estadoActual?.nivel} motivo={estadoActual?.motivo} />
+          </section>
+
+          {historial.length === 0 && <p className="text-suave">Todavía no hay historial de semáforo para este cliente.</p>}
+          <ol className="grid gap-4">
+            {historial.map((h, i) => {
+              const anterior = historial[i + 1];
+              return (
+                <li key={h.id} className="panel grid gap-3 p-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold">Semana del {fechaCorta(h.semana)}</span>
+                    <PillNivel nivel={h.nivel} />
+                    <Tendencia actual={h.nivel} anterior={anterior?.nivel} />
+                    <span className="text-xs text-suave">
+                      {h.origen === "planilla"
+                        ? "De la planilla de gestión"
+                        : h.ajustadoPor
+                          ? `Ajustado por ${h.ajustadoPor}${h.nivelSugerido && h.nivelSugerido !== h.nivel ? ` (Claude proponía nivel ${h.nivelSugerido})` : ""}`
+                          : `Análisis de Claude · ${fechaHora(h.actualizadoEn)}`}
+                    </span>
+                  </div>
+                  {h.motivo && <p className="font-medium">{h.motivo}</p>}
+                  {h.resumen && <p className="text-sm whitespace-pre-wrap text-suave">{h.resumen}</p>}
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {[
+                      ["Problemas", h.listas.problemas],
+                      ["Foco de la semana", h.listas.foco],
+                      ["Oportunidades", h.listas.oportunidades],
+                    ].map(([titulo, items]) =>
+                      (items as string[]).length ? (
+                        <div key={titulo as string}>
+                          <h3 className="text-xs font-semibold text-suave">{titulo}</h3>
+                          <ul className="mt-1 list-disc pl-4 text-sm">
+                            {(items as string[]).map((x) => (
+                              <li key={x}>{x}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null
+                    )}
+                  </div>
+                  {h.paraDireccion && (
+                    <p className="rounded-lg bg-critico-suave px-3 py-2 text-sm text-critico">
+                      <strong>Para la dirección:</strong> {h.paraDireccion}
+                    </p>
+                  )}
+                  {h.puntaje != null && (
+                    <p className="numeros text-xs text-suave">
+                      Puntaje operativo {h.puntaje}/100
+                      {typeof h.metricas.diasSinReunion === "number" && ` · ${h.metricas.diasSinReunion} días sin reunión`}
+                      {typeof h.metricas.vencidas === "number" && ` · ${h.metricas.vencidas} tareas vencidas`}
+                      {typeof h.metricas.pendientesClienteVencidos === "number" && ` · ${h.metricas.pendientesClienteVencidos} pendientes del cliente vencidos`}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+
+          {cliente.contextoHistorico && (
+            <details className="panel p-5">
+              <summary className="cursor-pointer font-bold">Notas históricas de la planilla de gestión</summary>
+              <p className="mt-3 text-sm whitespace-pre-wrap text-suave">{cliente.contextoHistorico}</p>
+            </details>
+          )}
+        </div>
+      )}
+
       {tab === "ficha" && (
         <div className="max-w-4xl">
           {ficha.faltan.length > 0 && (
             <p className="mb-4 rounded-lg bg-alerta-suave px-4 py-3 text-sm text-alerta">Falta completar: {ficha.faltan.join(", ")}.</p>
           )}
+          <PropuestaFicha clienteId={id} />
           <FormCliente cliente={cliente} accounts={accounts} analistas={analistas} />
         </div>
       )}

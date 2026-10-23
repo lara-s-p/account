@@ -18,7 +18,15 @@ export const PRIORIDADES = ["Alta", "Media", "Baja"] as const;
 export const DECISIONES = ["Pendiente", "Cargar", "No cargar", "Descartada"] as const;
 export const ESTADOS_TAREA = ["Por hacer", "En curso", "Bloqueada", "Hecha", "Sin seguimiento"] as const;
 export const RESPONSABLES = ["Known", "Cliente"] as const;
-export const SEMAFOROS = ["Verde", "Amarillo", "Rojo"] as const;
+/** Escala de criticidad de la planilla de Gestión Interna (pestaña "Semáforo"). */
+export const NIVELES = [
+  { nivel: 1, color: "Verde claro", nombre: "Cliente estable", queMirar: "Rendimiento bueno, relación fluida" },
+  { nivel: 2, color: "Verde oscuro", nombre: "Estable con algún detalle", queMirar: "Pequeños retrasos o desvíos menores" },
+  { nivel: 3, color: "Amarillo claro", nombre: "Atención", queMirar: "Algún desvío de números o pequeños roces en la relación" },
+  { nivel: 4, color: "Amarillo oscuro", nombre: "Riesgo moderado", queMirar: "Problemas de relación o de KPI importantes, pero manejables" },
+  { nivel: 5, color: "Rojo claro", nombre: "Riesgo alto", queMirar: "Problemas importantes en resultados o en la relación" },
+  { nivel: 6, color: "Rojo oscuro", nombre: "Riesgo crítico", queMirar: "Riesgo de que se vaya en el corto plazo" },
+] as const;
 /** Servicios que vende la agencia, con el código que usa la planilla de Gestión Interna. */
 export const SERVICIOS = ["SEO", "Content", "Paid", "Email", "Diseño", "BI", "Soporte evolutivo", "Redes"] as const;
 export const CODIGOS_SERVICIO: Record<string, (typeof SERVICIOS)[number]> = {
@@ -79,6 +87,8 @@ export const clientes = pgTable("clientes", {
   lookerStudio: text("looker_studio"),
   blueprint: text("blueprint"),
   notas: text("notas"),
+  // Notas históricas del semáforo de la planilla de Gestión Interna: contexto para el análisis semanal.
+  contextoHistorico: text("contexto_historico"),
   ...timestamps,
 });
 
@@ -188,13 +198,20 @@ export const estadosSemanales = pgTable(
     id: serial("id").primaryKey(),
     clienteId: text("cliente_id").notNull().references(() => clientes.id),
     semana: date("semana").notNull(), // lunes de la semana
-    semaforo: text("semaforo").notNull(),
+    semaforo: text("semaforo").notNull(), // nombre del nivel, por ejemplo "Riesgo alto"
+    nivel: integer("nivel").notNull(), // 1 (estable) a 6 (riesgo crítico)
+    nivelSugerido: integer("nivel_sugerido"), // el que propuso Claude, si el account lo cambió
+    motivo: text("motivo"),
+    origen: text("origen").notNull().default("ia"), // ia | manual | planilla
+    ajustadoPor: text("ajustado_por"),
     puntaje: integer("puntaje"),
     resumen: text("resumen"),
     problemas: text("problemas"),
     foco: text("foco"),
     oportunidades: text("oportunidades"),
     paraDireccion: text("para_direccion"),
+    // Problemas, foco y oportunidades también como listas, para mostrarlos y resumirlos en la alerta.
+    listas: jsonb("listas").$type<{ problemas: string[]; foco: string[]; oportunidades: string[] }>().notNull().default({ problemas: [], foco: [], oportunidades: [] }),
     metricas: jsonb("metricas").$type<Record<string, number | string | null>>().notNull().default({}),
     creadoPor: text("creado_por"),
     ...timestamps,

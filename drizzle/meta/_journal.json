@@ -22,6 +22,13 @@
       "when": 1792774278568,
       "tag": "0002_minutas_y_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792774875994,
+      "tag": "0003_semaforo",
+      "breakpoints": true
     }
   ]
 }

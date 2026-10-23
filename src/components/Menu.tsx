@@ -6,12 +6,13 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/", texto: "Inicio" },
   { href: "/bandeja", texto: "Bandeja" },
+  { href: "/semana", texto: "Estado semanal" },
   { href: "/clientes", texto: "Clientes" },
   { href: "/reuniones", texto: "Reuniones" },
   { href: "/tareas", texto: "Tareas" },
 ];
 
-const PROXIMAMENTE = ["Estado semanal", "Objetivos", "Pre-reunión"];
+const PROXIMAMENTE = ["Objetivos", "Pre-reunión"];
 
 export function Menu({ enBandeja }: { enBandeja: number }) {
   const ruta = usePathname();

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Encabezado, Pill } from "@/components/Etiquetas";
 import { listarClientes, listarReuniones, resumenInicio } from "@/lib/consultas";
 import { diasEntre, fechaCorta, hoyISO } from "@/lib/fechas";
+import { ultimosEstados } from "@/lib/semana";
+import { PillNivel } from "@/components/Semaforo";
 
 export const dynamic = "force-dynamic";
 
@@ -17,19 +19,21 @@ function Numero({ valor, texto, href, tono }: { valor: number; texto: string; hr
 
 export default async function Inicio() {
   const hoy = hoyISO();
-  const [r, clientes, ultimas] = await Promise.all([resumenInicio(), listarClientes(), listarReuniones({ limite: 8 })]);
+  const [r, clientes, ultimas, estados] = await Promise.all([resumenInicio(), listarClientes(), listarReuniones({ limite: 8 }), ultimosEstados()]);
 
   // Qué clientes atender primero: activos con señales de alerta, de más a menos grave.
   const atencion = clientes
     .filter((c) => c.cliente.estado === "Activo")
     .map((c) => {
       const dias = c.ultimaReunion ? diasEntre(c.ultimaReunion, hoy) : null;
+      const estado = estados.get(c.cliente.id);
       const motivos: { texto: string; peso: number }[] = [];
+      if (estado && estado.nivel >= 3) motivos.push({ texto: estado.semaforo, peso: estado.nivel * 4 });
       if (c.vencidas) motivos.push({ texto: `${c.vencidas} vencidas`, peso: 3 * c.vencidas });
       if (dias == null) motivos.push({ texto: "sin reuniones", peso: 6 });
       else if (dias > 30) motivos.push({ texto: `${dias} días sin reunión`, peso: dias / 10 });
       if (c.sinDecidir > 8) motivos.push({ texto: `${c.sinDecidir} sin decidir`, peso: c.sinDecidir / 4 });
-      return { ...c, dias, motivos, peso: motivos.reduce((s, m) => s + m.peso, 0) };
+      return { ...c, dias, estado, motivos, peso: motivos.reduce((s, m) => s + m.peso, 0) };
     })
     .filter((c) => c.motivos.length)
     .sort((a, b) => b.peso - a.peso)
@@ -54,7 +58,7 @@ export default async function Inicio() {
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <section className="panel min-w-0 p-5">
           <h2 className="font-bold">Clientes para atender primero</h2>
-          <p className="mb-3 text-xs text-suave">Clientes activos con tareas vencidas, muchos días sin reunión o muchas tareas sin decidir.</p>
+          <p className="mb-3 text-xs text-suave">Clientes activos en amarillo o rojo, con tareas vencidas, muchos días sin reunión o muchas tareas sin decidir.</p>
           {atencion.length ? (
             <ul className="divide-y divide-linea">
               {atencion.map((c) => (
@@ -63,7 +67,8 @@ export default async function Inicio() {
                     {c.cliente.nombre}
                   </Link>
                   <span className="flex flex-wrap gap-1">
-                    {c.motivos.map((m) => (
+                    {c.estado && c.estado.nivel >= 3 && <PillNivel nivel={c.estado.nivel} />}
+                    {c.motivos.filter((m) => m.texto !== c.estado?.semaforo).map((m) => (
                       <Pill key={m.texto} tono={m.texto.includes("vencidas") ? "critico" : "alerta"}>
                         {m.texto}
                       </Pill>

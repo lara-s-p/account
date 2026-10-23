@@ -4,6 +4,8 @@ import { ESTADOS_CLIENTE } from "@/db/schema";
 import { listarClientes } from "@/lib/consultas";
 import { diasEntre, fechaCorta, hoyISO } from "@/lib/fechas";
 import { completitudFicha } from "@/lib/ficha";
+import { ultimosEstados } from "@/lib/semana";
+import { PillNivel } from "@/components/Semaforo";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Clientes" };
@@ -11,7 +13,7 @@ export const metadata = { title: "Clientes" };
 export default async function Clientes({ searchParams }: { searchParams: Promise<{ estado?: string; q?: string }> }) {
   const { estado, q } = await searchParams;
   const hoy = hoyISO();
-  const todos = await listarClientes();
+  const [todos, estados] = await Promise.all([listarClientes(), ultimosEstados()]);
   const filas = todos.filter(
     (c) => (!estado || c.cliente.estado === estado) && (!q || c.cliente.nombre.toLowerCase().includes(q.toLowerCase()))
   );
@@ -42,6 +44,7 @@ export default async function Clientes({ searchParams }: { searchParams: Promise
             <tr>
               <th>Cliente</th>
               <th>Estado</th>
+              <th>Semáforo</th>
               <th>Account</th>
               <th>Servicios</th>
               <th>Última reunión</th>
@@ -66,6 +69,7 @@ export default async function Clientes({ searchParams }: { searchParams: Promise
                   <td>
                     <PillCliente valor={c.cliente.estado} />
                   </td>
+                  <td>{estados.get(c.cliente.id) ? <PillNivel nivel={estados.get(c.cliente.id)!.nivel} /> : <span className="text-suave">—</span>}</td>
                   <td>{c.cliente.account ?? <span className="text-suave">—</span>}</td>
                   <td className="whitespace-nowrap">{c.cliente.servicios.join(" · ") || <span className="text-suave">—</span>}</td>
                   <td className="whitespace-nowrap">
@@ -85,7 +89,7 @@ export default async function Clientes({ searchParams }: { searchParams: Promise
             })}
             {!filas.length && (
               <tr>
-                <td colSpan={9} className="py-8 text-center text-suave">
+                <td colSpan={10} className="py-8 text-center text-suave">
                   No hay clientes con esos filtros.
                 </td>
               </tr>
