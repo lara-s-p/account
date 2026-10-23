@@ -1,9 +1,11 @@
 import { signOut } from "@/auth";
 import { Menu } from "@/components/Menu";
+import { contarBandeja } from "@/lib/consultas";
 import { MODO_DESARROLLO, requerirUsuario } from "@/lib/sesion";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const usuario = await requerirUsuario();
+  const enBandeja = await contarBandeja();
   return (
     <div className="md:flex">
       <aside className="border-b border-linea bg-panel px-4 py-3 md:sticky md:top-0 md:flex md:h-screen md:w-56 md:shrink-0 md:flex-col md:border-r md:border-b-0 md:py-5">
@@ -13,7 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
           <div className="text-xs text-suave">Área de Account MKT</div>
         </div>
-        <Menu />
+        <Menu enBandeja={enBandeja} />
         <div className="mt-4 hidden border-t border-linea pt-4 text-xs text-suave md:mt-auto md:block">
           <div className="truncate font-medium text-tinta" title={usuario.email}>
             {usuario.nombre}

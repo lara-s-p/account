@@ -44,11 +44,11 @@ export default async function Inicio() {
       </Encabezado>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Numero valor={r.sinDecidir} texto="Tareas sin decidir" href="/tareas?vista=sin-decidir" tono="alerta" />
+        <Numero valor={r.enBandeja} texto="Tareas en la bandeja" href="/bandeja" tono="alerta" />
         <Numero valor={r.vencidas} texto="Tareas vencidas" href="/tareas?vista=vencidas" tono="critico" />
         <Numero valor={r.abiertas} texto="Tareas abiertas" href="/tareas?vista=abiertas" />
         <Numero valor={r.sinFecha} texto="Abiertas sin fecha límite" href="/tareas?vista=sin-fecha" tono="alerta" />
-        <Numero valor={r.reunionesSemana} texto="Reuniones en los últimos 7 días" href="/reuniones" />
+        <Numero valor={r.sinDecidir} texto="Sin decidir (incluye el sheet)" href="/tareas?vista=sin-decidir" />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

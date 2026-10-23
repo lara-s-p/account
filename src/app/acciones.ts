@@ -1,16 +1,18 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import {
+  ACCIONES_JIRA,
   analistas,
   clientes,
   DECISIONES,
   ESTADOS_CLIENTE,
   ESTADOS_TAREA,
   ETIQUETAS,
+  SERVICIOS,
   PRIORIDADES,
   RESPONSABLES,
   reuniones,
@@ -21,6 +23,8 @@ import {
 import { sugerenciasAnalista } from "@/lib/consultas";
 import { fechaCorta } from "@/lib/fechas";
 import { leerGoogleDoc } from "@/lib/google-docs";
+import { comentarIssue, crearIssue, ErrorJira, issuesAbiertos, jiraConfigurado, urlIssue } from "@/lib/jira";
+import { idCanal, publicarEnSlack, slackConfigurado } from "@/lib/slack";
 import { procesarMinutaConClaude } from "@/lib/minuta";
 import { requerirUsuario } from "@/lib/sesion";
 import { claveNombre, formatoId } from "@/lib/texto";
@@ -64,6 +68,16 @@ export async function guardarCliente(_prev: EstadoFormulario, fd: FormData): Pro
     alias: String(fd.get("alias") ?? "").split(",").map((a) => a.trim()).filter(Boolean),
     estado: (ESTADOS_CLIENTE as readonly string[]).includes(estado) ? estado : "Revisar",
     account: texto(fd, "account"),
+    accountApoyo: texto(fd, "accountApoyo"),
+    prioridad: texto(fd, "prioridad") ? Number(texto(fd, "prioridad")) : null,
+    analistaSeoId: texto(fd, "analistaSeoId") ? Number(texto(fd, "analistaSeoId")) : null,
+    analistaPaidId: texto(fd, "analistaPaidId") ? Number(texto(fd, "analistaPaidId")) : null,
+    analistaEmailId: texto(fd, "analistaEmailId") ? Number(texto(fd, "analistaEmailId")) : null,
+    disenadora: texto(fd, "disenadora"),
+    redactora: texto(fd, "redactora"),
+    plataformaEmail: texto(fd, "plataformaEmail"),
+    lookerStudio: texto(fd, "lookerStudio"),
+    blueprint: texto(fd, "blueprint"),
     industria: texto(fd, "industria"),
     pais: texto(fd, "pais"),
     sitioWeb: texto(fd, "sitioWeb"),
@@ -71,7 +85,7 @@ export async function guardarCliente(_prev: EstadoFormulario, fd: FormData): Pro
     descripcionNegocio: texto(fd, "descripcionNegocio"),
     objetivosNegocio: texto(fd, "objetivosNegocio"),
     competidores: texto(fd, "competidores"),
-    servicios: fd.getAll("servicios").map(String).filter((s) => (ETIQUETAS as readonly string[]).includes(s)),
+    servicios: fd.getAll("servicios").map(String).filter((s) => (SERVICIOS as readonly string[]).includes(s)),
     feeMensual: texto(fd, "feeMensual"),
     fechaInicio: texto(fd, "fechaInicio"),
     frecuenciaReunion: texto(fd, "frecuenciaReunion"),
@@ -112,6 +126,7 @@ const CAMPOS_TAREA = {
   etiqueta: ETIQUETAS,
   prioridad: PRIORIDADES,
   responsable: RESPONSABLES,
+  accionJira: ACCIONES_JIRA,
 } as const;
 
 type CampoEditable = keyof typeof CAMPOS_TAREA | "analistaId" | "fechaLimite" | "titulo" | "descripcion" | "objetivo";
@@ -162,6 +177,7 @@ export async function actualizarTarea(id: string, campo: CampoEditable, valor: s
   await db.update(tareas).set(cambios).where(eq(tareas.id, id));
   await db.insert(tareaEventos).values({ tareaId: id, usuario: usuario.nombre, tipo: "cambio", campo, valorAnterior: anterior, valorNuevo: nuevo });
   revalidatePath("/tareas");
+  revalidatePath("/bandeja");
   revalidatePath(`/tareas/${id}`);
   if (tarea.reunionId) revalidatePath(`/reuniones/${tarea.reunionId}`);
   return {};
@@ -209,6 +225,29 @@ export async function crearTarea(_prev: EstadoFormulario, fd: FormData): Promise
 
 /* ===================== Reuniones ===================== */
 
+/**
+ * Tareas abiertas del cliente con las que comparar las de la minuta nueva.
+ * Si Jira está conectado se consultan ahí (estado real); si no, se usan las que la plataforma tiene con issue de Jira.
+ */
+async function tareasAbiertasParaComparar(cliente: typeof clientes.$inferSelect) {
+  const proyecto = cliente.jiraProjectId || cliente.jiraProjectKey;
+  if (jiraConfigurado() && proyecto) {
+    try {
+      return await issuesAbiertos(proyecto, 60);
+    } catch (e) {
+      console.error("No se pudieron leer las tareas abiertas de Jira", e);
+    }
+  }
+  const db = await getDb();
+  const filas = await db
+    .select({ key: tareas.jiraKey, titulo: tareas.titulo, estado: tareas.estado })
+    .from(tareas)
+    .where(and(eq(tareas.clienteId, cliente.id), isNotNull(tareas.jiraKey), ne(tareas.estado, "Hecha"), eq(tareas.decision, "Cargar")))
+    .orderBy(desc(tareas.id))
+    .limit(60);
+  return filas.map((f) => ({ key: f.key!, titulo: f.titulo, estado: f.estado }));
+}
+
 export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
   const usuario = await requerirUsuario();
   const db = await getDb();
@@ -234,7 +273,9 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
       textoMinuta = await leerGoogleDoc(linkDoc, usuario.googleAccessToken);
     }
     const listaAnalistas = await db.select().from(analistas).where(eq(analistas.activo, true));
+    const abiertas = await tareasAbiertasParaComparar(cliente);
     const resultado = await procesarMinutaConClaude({
+      abiertas,
       texto: textoMinuta!,
       cliente: cliente.nombre,
       fecha,
@@ -269,6 +310,7 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
           const sugerido = sugerir(t.etiqueta);
           const mencionado = t.analista_mencionado ? porNombre.get(claveNombre(t.analista_mencionado)) : undefined;
           const fechaValida = t.fecha_limite && /^\d{4}-\d{2}-\d{2}$/.test(t.fecha_limite) ? t.fecha_limite : null;
+          const relacionada = t.responsable === "Known" && t.relacionada_con && abiertas.some((a) => a.key === t.relacionada_con) ? t.relacionada_con : null;
           return {
             id: idTarea(i + 1),
             clienteId,
@@ -281,6 +323,9 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
             fechaLimite: fechaValida,
             analistaSugeridoId: t.responsable === "Known" ? sugerido : null,
             analistaId: t.responsable === "Known" ? mencionado ?? sugerido : null,
+            jiraRelacionada: relacionada,
+            motivoRelacion: relacionada ? t.motivo_relacion : null,
+            accionJira: relacionada ? "comentar" : "crear",
           };
         });
         await tx.insert(tareas).values(filas);
@@ -291,7 +336,7 @@ export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Prom
     });
     revalidatePath("/reuniones");
     revalidatePath(`/clientes/${clienteId}`);
-    redirect(`/reuniones/${idReunion}`);
+    redirect(`/bandeja#${idReunion}`);
   } catch (e) {
     if (e && typeof e === "object" && "digest" in e && String((e as { digest: unknown }).digest).startsWith("NEXT_REDIRECT")) throw e;
     console.error("Error al procesar la minuta", e);
@@ -315,5 +360,124 @@ export async function decidirPendientes(reunionId: string, decision: "Cargar" | 
     pendientes.map((t) => ({ tareaId: t.id, usuario: usuario.nombre, tipo: "cambio", campo: "decision", valorAnterior: "Pendiente", valorNuevo: decision }))
   );
   revalidatePath(`/reuniones/${reunionId}`);
+  revalidatePath("/bandeja");
   revalidatePath("/tareas");
+}
+
+/* ===================== Bandeja: envío a Jira y Slack ===================== */
+
+export type ResultadoEnvio = { enviadas: number; comentadas: number; delCliente: number; errores: string[]; avisoSlack?: string };
+
+/**
+ * Envía las tareas aprobadas de una reunión (o las cargadas a mano de un cliente):
+ * - las de Known se crean en Jira asignadas al analista, o se comentan en el issue existente si son repetidas;
+ * - las del cliente no van a Jira: pasan directo a su perfil;
+ * - al final se avisa en el canal de Slack del cliente con la lista y los links.
+ * Las que fallan quedan en la bandeja con el motivo, para corregir y volver a enviar.
+ */
+export async function enviarTareas(grupo: { clienteId: string; reunionId: string | null }): Promise<ResultadoEnvio> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const resultado: ResultadoEnvio = { enviadas: 0, comentadas: 0, delCliente: 0, errores: [] };
+  const [cliente] = await db.select().from(clientes).where(eq(clientes.id, grupo.clienteId));
+  if (!cliente) return { ...resultado, errores: ["El cliente no existe."] };
+  const [reunion] = grupo.reunionId ? await db.select().from(reuniones).where(and(eq(reuniones.id, grupo.reunionId), eq(reuniones.clienteId, cliente.id))) : [];
+  if (grupo.reunionId && !reunion) return { ...resultado, errores: ["La reunión no existe."] };
+
+  const aprobadas = await db
+    .select({ tarea: tareas, analista: analistas })
+    .from(tareas)
+    .leftJoin(analistas, eq(analistas.id, tareas.analistaId))
+    .where(
+      and(
+        eq(tareas.clienteId, cliente.id),
+        reunion ? eq(tareas.reunionId, reunion.id) : isNull(tareas.reunionId),
+        eq(tareas.origen, "plataforma"),
+        eq(tareas.decision, "Cargar"),
+        isNull(tareas.enviadaEn)
+      )
+    )
+    .orderBy(tareas.id);
+  if (!aprobadas.length) return { ...resultado, errores: ["No hay tareas aprobadas para enviar. Marcá como \"Cargar\" las que van."] };
+
+  const deKnown = aprobadas.filter((a) => a.tarea.responsable === "Known");
+  if (deKnown.length && !jiraConfigurado()) return { ...resultado, errores: ["Jira no está conectado todavía (faltan JIRA_EMAIL y JIRA_TOKEN)."] };
+  if (deKnown.length && !cliente.jiraProjectId && !cliente.jiraProjectKey) {
+    return { ...resultado, errores: [`${cliente.nombre} no tiene proyecto de Jira en la ficha.`] };
+  }
+
+  const lineas: string[] = [];
+  const lineasCliente: string[] = [];
+  const origen = reunion ? `la reunión del ${fechaCorta(reunion.fecha)}` : "tareas cargadas a mano";
+  for (const { tarea, analista } of aprobadas) {
+    const evento = (comentario: string) => db.insert(tareaEventos).values({ tareaId: tarea.id, usuario: usuario.nombre, tipo: "cambio", campo: "envio", comentario });
+    try {
+      if (tarea.responsable === "Cliente") {
+        await db.update(tareas).set({ enviadaEn: new Date(), errorEnvio: null, estado: "Por hacer", actualizadoEn: new Date() }).where(eq(tareas.id, tarea.id));
+        await evento("Confirmada como pendiente del cliente");
+        lineasCliente.push(`• ${tarea.titulo}${tarea.fechaLimite ? ` (para el ${fechaCorta(tarea.fechaLimite)})` : ""}`);
+        resultado.delCliente++;
+        continue;
+      }
+      if (tarea.accionJira === "comentar" && tarea.jiraRelacionada) {
+        const comentario = [`Seguimiento (${origen}): ${tarea.titulo}`, tarea.motivoRelacion ?? tarea.descripcion ?? ""].filter(Boolean).join("\n");
+        await comentarIssue(tarea.jiraRelacionada, comentario);
+        await db
+          .update(tareas)
+          .set({ jiraKey: tarea.jiraRelacionada, enviadaEn: new Date(), errorEnvio: null, estado: "Por hacer", actualizadoEn: new Date() })
+          .where(eq(tareas.id, tarea.id));
+        await evento(`Comentada en ${tarea.jiraRelacionada}`);
+        lineas.push(`• Seguimiento en <${urlIssue(tarea.jiraRelacionada)}|${tarea.jiraRelacionada}>: ${tarea.titulo}`);
+        resultado.comentadas++;
+        continue;
+      }
+      if (!analista) throw new ErrorJira("No tiene analista asignado.");
+      if (!analista.jiraAccountId) throw new ErrorJira(`${analista.nombre} no tiene su usuario de Jira cargado.`);
+      const key = await crearIssue({
+        proyectoId: cliente.jiraProjectId,
+        proyectoKey: cliente.jiraProjectKey,
+        tipoIssueId: cliente.jiraIssueType,
+        titulo: tarea.titulo,
+        descripcion: [tarea.descripcion, reunion ? `Surgió en ${origen}.` : null].filter(Boolean).join("\n"),
+        responsableAccountId: analista.jiraAccountId,
+        vencimiento: tarea.fechaLimite,
+        etiqueta: tarea.etiqueta,
+      });
+      await db.update(tareas).set({ jiraKey: key, enviadaEn: new Date(), errorEnvio: null, estado: "Por hacer", actualizadoEn: new Date() }).where(eq(tareas.id, tarea.id));
+      await evento(`Creada en Jira como ${key}`);
+      lineas.push(`• <${urlIssue(key)}|${key}> ${tarea.titulo} — ${analista.nombre}${tarea.fechaLimite ? ` (vence ${fechaCorta(tarea.fechaLimite)})` : ""}`);
+      resultado.enviadas++;
+    } catch (e) {
+      const motivo = e instanceof Error ? e.message : "Error desconocido";
+      await db.update(tareas).set({ errorEnvio: motivo }).where(eq(tareas.id, tarea.id));
+      resultado.errores.push(`${tarea.titulo}: ${motivo}`);
+    }
+  }
+
+  // Aviso en el canal del cliente
+  if (lineas.length || lineasCliente.length) {
+    const canal = idCanal(cliente.slackCanal);
+    const texto = [
+      reunion ? `*Tareas de ${origen}*` : `*Tareas nuevas de ${cliente.nombre}*`,
+      ...lineas,
+      lineasCliente.length ? `\n*Pendientes de ${cliente.nombre}*` : "",
+      ...lineasCliente,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    if (!slackConfigurado()) resultado.avisoSlack = "Slack no está conectado: no se avisó en el canal.";
+    else if (!canal) resultado.avisoSlack = `${cliente.nombre} no tiene canal de Slack en la ficha: no se avisó.`;
+    else {
+      try {
+        await publicarEnSlack(canal, texto);
+      } catch (e) {
+        resultado.avisoSlack = e instanceof Error ? e.message : "No se pudo avisar en Slack.";
+      }
+    }
+  }
+  revalidatePath("/bandeja");
+  revalidatePath("/tareas");
+  if (reunion) revalidatePath(`/reuniones/${reunion.id}`);
+  revalidatePath(`/clientes/${cliente.id}`);
+  return resultado;
 }

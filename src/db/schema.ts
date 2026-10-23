@@ -19,6 +19,20 @@ export const DECISIONES = ["Pendiente", "Cargar", "No cargar", "Descartada"] as 
 export const ESTADOS_TAREA = ["Por hacer", "En curso", "Bloqueada", "Hecha", "Sin seguimiento"] as const;
 export const RESPONSABLES = ["Known", "Cliente"] as const;
 export const SEMAFOROS = ["Verde", "Amarillo", "Rojo"] as const;
+/** Servicios que vende la agencia, con el código que usa la planilla de Gestión Interna. */
+export const SERVICIOS = ["SEO", "Content", "Paid", "Email", "Diseño", "BI", "Soporte evolutivo", "Redes"] as const;
+export const CODIGOS_SERVICIO: Record<string, (typeof SERVICIOS)[number]> = {
+  S: "SEO",
+  C: "Content",
+  P: "Paid",
+  A: "Email",
+  D: "Diseño",
+  B: "BI",
+  E: "Soporte evolutivo",
+  CM: "Redes",
+};
+/** Qué hacer en Jira con una tarea aprobada: crear un issue nuevo o comentar en uno existente. */
+export const ACCIONES_JIRA = ["crear", "comentar"] as const;
 
 export type Contacto = { nombre: string; cargo?: string; email?: string; telefono?: string };
 
@@ -33,6 +47,8 @@ export const clientes = pgTable("clientes", {
   alias: text("alias").array().notNull().default(sql`'{}'::text[]`),
   estado: text("estado").notNull().default("Revisar"),
   account: text("account"),
+  accountApoyo: text("account_apoyo"),
+  prioridad: integer("prioridad"), // prioridad estratégica, 1 a 5
   // Negocio
   industria: text("industria"),
   pais: text("pais"),
@@ -46,6 +62,12 @@ export const clientes = pgTable("clientes", {
   feeMensual: text("fee_mensual"),
   fechaInicio: date("fecha_inicio"),
   frecuenciaReunion: text("frecuencia_reunion"),
+  // Equipo asignado
+  analistaSeoId: integer("analista_seo_id"),
+  analistaEmailId: integer("analista_email_id"),
+  analistaPaidId: integer("analista_paid_id"),
+  disenadora: text("disenadora"),
+  redactora: text("redactora"),
   contactos: jsonb("contactos").$type<Contacto[]>().notNull().default([]),
   // Integraciones
   jiraProjectKey: text("jira_project_key"),
@@ -53,6 +75,9 @@ export const clientes = pgTable("clientes", {
   jiraIssueType: text("jira_issue_type"),
   slackCanal: text("slack_canal"),
   trelloTablero: text("trello_tablero"),
+  plataformaEmail: text("plataforma_email"),
+  lookerStudio: text("looker_studio"),
+  blueprint: text("blueprint"),
   notas: text("notas"),
   ...timestamps,
 });
@@ -118,6 +143,12 @@ export const tareas = pgTable(
     objetivo: text("objetivo"),
     jiraKey: text("jira_key"),
     estadoJira: text("estado_jira"),
+    // Si se parece a un issue abierto, se puede comentar ahí en vez de crear uno nuevo.
+    accionJira: text("accion_jira").notNull().default("crear"),
+    jiraRelacionada: text("jira_relacionada"),
+    motivoRelacion: text("motivo_relacion"),
+    enviadaEn: timestamp("enviada_en", { withTimezone: true }),
+    errorEnvio: text("error_envio"),
     origen: text("origen").notNull().default("plataforma"),
     origenClave: text("origen_clave").unique(), // fila del sheet, para no duplicar al reimportar
     ...timestamps,

@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrar.ts",
-    "importar": "tsx scripts/importar-sheet.ts"
+    "importar": "tsx scripts/importar-sheet.ts",
+    "importar:clientes": "tsx scripts/importar-clientes.ts"
   },
   "engines": {
     "node": ">=20"

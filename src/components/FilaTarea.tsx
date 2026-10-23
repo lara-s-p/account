@@ -40,6 +40,28 @@ export function FilaTarea({
           {tarea.prioridad === "Alta" && <Pill tono="critico">Alta</Pill>}
         </div>
         {tarea.descripcion && <p className="mt-1 line-clamp-2 max-w-xl text-xs text-suave">{tarea.descripcion}</p>}
+        {tarea.jiraRelacionada && !tarea.enviadaEn && (
+          <div className="mt-2 grid max-w-xl gap-1 rounded-lg bg-marca-suave px-2 py-1.5 text-xs">
+            <span>
+              Parece la misma que{" "}
+              <a href={`https://knownonline.atlassian.net/browse/${tarea.jiraRelacionada}`} target="_blank" rel="noreferrer" className="enlace">
+                {tarea.jiraRelacionada}
+              </a>
+              {tarea.motivoRelacion && <span className="text-suave">: {tarea.motivoRelacion}</span>}
+            </span>
+            <CampoTarea
+              id={tarea.id}
+              campo="accionJira"
+              valor={tarea.accionJira}
+              opciones={[
+                { valor: "comentar", texto: `Comentar en ${tarea.jiraRelacionada}` },
+                { valor: "crear", texto: "Crear una tarea nueva" },
+              ]}
+              etiqueta="Qué hacer en Jira"
+            />
+          </div>
+        )}
+        {tarea.errorEnvio && !tarea.enviadaEn && <p className="mt-1 max-w-xl text-xs font-semibold text-critico">No se pudo enviar: {tarea.errorEnvio}</p>}
       </td>
       <td>
         <CampoTarea id={tarea.id} campo="decision" valor={tarea.decision} opciones={opcionesDe(DECISIONES)} etiqueta="Decisión" />

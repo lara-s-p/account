@@ -1,12 +1,20 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNotNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import { analistas, clientes, reuniones, tareaEventos, tareas } from "@/db/schema";
 import { hoyISO } from "./fechas";
 
 export const ESTADOS_ABIERTOS = ["Por hacer", "En curso", "Bloqueada"];
 
-const abierta = and(eq(tareas.decision, "Cargar"), inArray(tareas.estado, ESTADOS_ABIERTOS));
+/** Una tarea está abierta cuando se aprobó, ya salió de la bandeja (o vino del sheet) y no se terminó. */
+const abierta = and(
+  eq(tareas.decision, "Cargar"),
+  inArray(tareas.estado, ESTADOS_ABIERTOS),
+  or(ne(tareas.origen, "plataforma"), isNotNull(tareas.enviadaEn))
+);
+/** En la bandeja: tareas generadas en la plataforma que todavía no se enviaron ni se descartaron. */
+const enBandeja = and(eq(tareas.origen, "plataforma"), isNull(tareas.enviadaEn), inArray(tareas.decision, ["Pendiente", "Cargar"]));
+const SQL_ENVIADA = `(t.origen <> 'plataforma' or t.enviada_en is not null)`;
 
 export async function listarAnalistas() {
   const db = await getDb();
@@ -27,10 +35,10 @@ export async function listarClientes() {
       cliente: clientes,
       ultimaReunion: sql<string | null>`(select max(r.fecha)::text from reuniones r where r.cliente_id = "clientes"."id")`,
       reuniones90: sql<number>`(select count(*)::int from reuniones r where r.cliente_id = "clientes"."id" and r.fecha >= ${hoy}::date - 90)`,
-      abiertas: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.decision = 'Cargar' and t.estado in ('Por hacer','En curso','Bloqueada'))`,
-      vencidas: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.decision = 'Cargar' and t.estado in ('Por hacer','En curso','Bloqueada') and t.fecha_limite < ${hoy}::date)`,
+      abiertas: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.decision = 'Cargar' and t.estado in ('Por hacer','En curso','Bloqueada') and ${sql.raw(SQL_ENVIADA)})`,
+      vencidas: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.decision = 'Cargar' and t.estado in ('Por hacer','En curso','Bloqueada') and ${sql.raw(SQL_ENVIADA)} and t.fecha_limite < ${hoy}::date)`,
       sinDecidir: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.decision = 'Pendiente')`,
-      pendientesCliente: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.responsable = 'Cliente' and t.estado in ('Por hacer','En curso','Bloqueada') and t.decision <> 'Descartada')`,
+      pendientesCliente: sql<number>`(select count(*)::int from tareas t where t.cliente_id = "clientes"."id" and t.responsable = 'Cliente' and t.estado in ('Por hacer','En curso','Bloqueada') and t.decision = 'Cargar' and ${sql.raw(SQL_ENVIADA)})`,
     })
     .from(clientes)
     .orderBy(asc(clientes.nombre));
@@ -153,11 +161,17 @@ export async function obtenerTarea(id: string) {
 }
 
 /**
- * Analista sugerido: el que más tareas tomó de ese cliente con esa etiqueta.
- * Si no hay historial para la etiqueta, el que más tareas tomó de ese cliente.
+ * Analista sugerido para una tarea según su etiqueta:
+ * 1. El analista del área asignado en la ficha del cliente (SEO, Paid o Email).
+ * 2. Si no hay, el que más tareas tomó de ese cliente con esa etiqueta.
+ * 3. Si no hay historial para la etiqueta, el que más tareas tomó de ese cliente.
  */
 export async function sugerenciasAnalista(clienteId: string) {
   const db = await getDb();
+  const [cliente] = await db
+    .select({ seo: clientes.analistaSeoId, paid: clientes.analistaPaidId, email: clientes.analistaEmailId })
+    .from(clientes)
+    .where(eq(clientes.id, clienteId));
   const filas = await db
     .select({ etiqueta: tareas.etiqueta, analistaId: tareas.analistaId, n: sql<number>`count(*)::int` })
     .from(tareas)
@@ -172,7 +186,8 @@ export async function sugerenciasAnalista(clienteId: string) {
     if (!previo || f.n > previo.n) mejor.set(f.etiqueta, { analistaId: f.analistaId!, n: f.n });
   }
   const general = [...total.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  return (etiqueta: string | null | undefined) => (etiqueta && mejor.get(etiqueta)?.analistaId) || general;
+  const deLaFicha: Record<string, number | null | undefined> = { SEO: cliente?.seo, PAID: cliente?.paid, EMAIL: cliente?.email };
+  return (etiqueta: string | null | undefined) => (etiqueta && (deLaFicha[etiqueta] || mejor.get(etiqueta)?.analistaId)) || general;
 }
 
 export async function resumenInicio() {
@@ -181,13 +196,39 @@ export async function resumenInicio() {
   const [conteos] = await db
     .select({
       sinDecidir: sql<number>`count(*) filter (where ${tareas.decision} = 'Pendiente')::int`,
-      abiertas: sql<number>`count(*) filter (where ${tareas.decision} = 'Cargar' and ${tareas.estado} in ('Por hacer','En curso','Bloqueada'))::int`,
-      vencidas: sql<number>`count(*) filter (where ${tareas.decision} = 'Cargar' and ${tareas.estado} in ('Por hacer','En curso','Bloqueada') and ${tareas.fechaLimite} < ${hoy}::date)::int`,
-      sinFecha: sql<number>`count(*) filter (where ${tareas.decision} = 'Cargar' and ${tareas.estado} in ('Por hacer','En curso','Bloqueada') and ${tareas.fechaLimite} is null)::int`,
+      abiertas: sql<number>`count(*) filter (where ${abierta})::int`,
+      vencidas: sql<number>`count(*) filter (where ${abierta} and ${tareas.fechaLimite} < ${hoy}::date)::int`,
+      sinFecha: sql<number>`count(*) filter (where ${abierta} and ${tareas.fechaLimite} is null)::int`,
+      enBandeja: sql<number>`count(*) filter (where ${enBandeja})::int`,
     })
     .from(tareas);
   const [reus] = await db
     .select({ semana: sql<number>`count(*) filter (where ${reuniones.fecha} >= ${hoy}::date - 7)::int` })
     .from(reuniones);
   return { ...conteos, reunionesSemana: reus.semana };
+}
+
+/** Tareas de la bandeja agrupadas por reunión (o por cliente si se cargaron a mano). */
+export async function listarBandeja() {
+  const db = await getDb();
+  const filas = await db
+    .select({ tarea: tareas, cliente: clientes, reunion: reuniones })
+    .from(tareas)
+    .innerJoin(clientes, eq(clientes.id, tareas.clienteId))
+    .leftJoin(reuniones, eq(reuniones.id, tareas.reunionId))
+    .where(enBandeja)
+    .orderBy(sql`${reuniones.fecha} desc nulls last`, asc(clientes.nombre), asc(tareas.id));
+  const grupos = new Map<string, { clave: string; cliente: (typeof filas)[number]["cliente"]; reunion: (typeof filas)[number]["reunion"]; tareas: (typeof filas)[number]["tarea"][] }>();
+  for (const f of filas) {
+    const clave = f.reunion?.id ?? `manual-${f.cliente.id}`;
+    if (!grupos.has(clave)) grupos.set(clave, { clave, cliente: f.cliente, reunion: f.reunion, tareas: [] });
+    grupos.get(clave)!.tareas.push(f.tarea);
+  }
+  return [...grupos.values()];
+}
+
+export async function contarBandeja() {
+  const db = await getDb();
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(tareas).where(enBandeja);
+  return n;
 }

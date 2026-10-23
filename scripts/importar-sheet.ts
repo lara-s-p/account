@@ -15,42 +15,11 @@
  */
 import { createHash } from "node:crypto";
 import ExcelJS from "exceljs";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { conectar } from "../src/db/conexion";
 import { analistas, clientes, reuniones, tareaEventos, tareas } from "../src/db/schema";
 import { claveNombre, formatoId, jiraKeyDeLink, limpiar, numeroDeId } from "../src/lib/texto";
-
-type Fila = Record<string, unknown>;
-
-function valorCelda(v: ExcelJS.CellValue): unknown {
-  if (v && typeof v === "object") {
-    if (v instanceof Date) return v;
-    if ("text" in v) return (v as { text: unknown }).text; // hipervínculos
-    if ("result" in v) return (v as { result: unknown }).result; // fórmulas
-    if ("richText" in v) return (v as { richText: { text: string }[] }).richText.map((r) => r.text).join("");
-  }
-  return v;
-}
-
-/** Lee una pestaña como lista de objetos usando la fila de encabezados indicada. */
-function leerHoja(wb: ExcelJS.Workbook, nombre: string, filaEncabezado = 1): Fila[] {
-  const ws = wb.getWorksheet(nombre);
-  if (!ws) return [];
-  const encabezados: string[] = [];
-  ws.getRow(filaEncabezado).eachCell({ includeEmpty: true }, (c, i) => {
-    encabezados[i] = String(valorCelda(c.value) ?? "").trim();
-  });
-  const filas: Fila[] = [];
-  ws.eachRow({ includeEmpty: false }, (row, n) => {
-    if (n <= filaEncabezado) return;
-    const f: Fila = {};
-    row.eachCell({ includeEmpty: true }, (c, i) => {
-      if (encabezados[i]) f[encabezados[i]] = valorCelda(c.value);
-    });
-    if (Object.values(f).some((v) => limpiar(v))) filas.push(f);
-  });
-  return filas;
-}
+import { leerHoja } from "./excel";
 
 function aFechaISO(v: unknown): string | null {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
@@ -309,6 +278,18 @@ async function main() {
   }
   if (eventos.length) await db.insert(tareaEventos).values(eventos);
   resumen.tareasNuevas = nuevasTareas.length;
+
+  /* ---------- Proyecto de Jira real de cada cliente ---------- */
+  // La clave que usan las tareas creadas es la verdadera (la hoja "Asignación JIRA y Slack" a veces tiene una vieja).
+  const prefijos = await db.execute<{ cliente_id: string; prefijo: string }>(sql`
+    select distinct on (cliente_id) cliente_id, split_part(jira_key, '-', 1) as prefijo
+    from tareas where jira_key is not null
+    group by cliente_id, split_part(jira_key, '-', 1)
+    order by cliente_id, count(*) desc`);
+  const filasPrefijos = ("rows" in prefijos ? prefijos.rows : prefijos) as { cliente_id: string; prefijo: string }[];
+  for (const { cliente_id, prefijo } of filasPrefijos) {
+    await db.update(clientes).set({ jiraProjectKey: prefijo }).where(and(eq(clientes.id, cliente_id), sql`${clientes.jiraProjectKey} is distinct from ${prefijo}`));
+  }
 
   console.log("Importación terminada:", resumen);
   if (filasDescartadas.length) console.log("Filas omitidas porque la columna Cliente no tiene un cliente válido:\n  " + filasDescartadas.join("\n  "));

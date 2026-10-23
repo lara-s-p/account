@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BotonEnviar } from "@/components/BotonEnviar";
 import { BotonesDecision } from "@/components/BotonesDecision";
 import { Dato, Encabezado, Pill, PillEstado } from "@/components/Etiquetas";
 import { CabeceraTareas, FilaTarea } from "@/components/FilaTarea";
@@ -124,10 +125,19 @@ export default async function ReunionPage({ params }: { params: Promise<{ id: st
         <div>
           <h2 className="text-lg font-bold">Tareas de esta reunión</h2>
           <p className="text-sm text-suave">
-            Revisá analista, etiqueta y fecha límite. Las que marques como &quot;Cargar&quot; pasan a seguimiento.
+            Revisá analista, etiqueta y fecha límite, marcá las que se cargan y envialas a Jira. También se pueden enviar desde la{" "}
+            <Link href="/bandeja" className="enlace">
+              Bandeja
+            </Link>
+            .
           </p>
         </div>
-        <BotonesDecision reunionId={id} pendientes={pendientes} />
+        <div className="flex flex-wrap items-start gap-2">
+          <BotonesDecision reunionId={id} pendientes={pendientes} />
+          {reunion.origen === "plataforma" && (
+            <BotonEnviar clienteId={cliente.id} cliente={cliente.nombre} reunionId={id} aprobadas={filas.filter((f) => f.tarea.decision === "Cargar" && !f.tarea.enviadaEn).length} />
+          )}
+        </div>
       </div>
       <div className="panel overflow-x-auto">
         <table className="tabla">

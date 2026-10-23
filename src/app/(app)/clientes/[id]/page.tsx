@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Dato, Encabezado, Pill, PillCliente, PillDecision, PillEstado } from "@/components/Etiquetas";
 import { FormCliente } from "@/components/FormCliente";
-import { listarClientes, listarReuniones, listarTareas, obtenerCliente } from "@/lib/consultas";
+import { listarAnalistas, listarClientes, listarReuniones, listarTareas, obtenerCliente } from "@/lib/consultas";
 import { diasEntre, fechaCorta, hoyISO } from "@/lib/fechas";
 import { completitudFicha } from "@/lib/ficha";
 
@@ -27,11 +27,12 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
 
   const ficha = completitudFicha(cliente);
   const hoy = hoyISO();
-  const [todos, reunionesCliente, abiertas, sinDecidir] = await Promise.all([
+  const [todos, reunionesCliente, abiertas, sinDecidir, analistas] = await Promise.all([
     listarClientes(),
     listarReuniones({ clienteId: id, limite: 100 }),
     listarTareas({ cliente: id, vista: "abiertas" }),
     listarTareas({ cliente: id, vista: "sin-decidir" }),
+    listarAnalistas(),
   ]);
   const metricas = todos.find((c) => c.cliente.id === id)!;
   const accounts = [...new Set(todos.map((c) => c.cliente.account).filter((a): a is string => !!a))].sort();
@@ -77,7 +78,7 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
           {ficha.faltan.length > 0 && (
             <p className="mb-4 rounded-lg bg-alerta-suave px-4 py-3 text-sm text-alerta">Falta completar: {ficha.faltan.join(", ")}.</p>
           )}
-          <FormCliente cliente={cliente} accounts={accounts} />
+          <FormCliente cliente={cliente} accounts={accounts} analistas={analistas} />
         </div>
       )}
 
@@ -160,6 +161,7 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
                         {tarea.titulo}
                       </Link>
                       <span className="flex gap-1">
+                        {tarea.jiraKey && <Pill>{tarea.jiraKey}</Pill>}
                         {tarea.responsable === "Cliente" && <Pill tono="marca">Cliente</Pill>}
                         <PillEstado valor={tarea.estado} />
                         <Pill tono={tarea.fechaLimite && tarea.fechaLimite < hoy ? "critico" : "neutro"}>
@@ -233,6 +235,23 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
               </Link>
             </div>
             <Dato etiqueta="Servicios">{cliente.servicios.join(" · ")}</Dato>
+            <Dato etiqueta="Equipo">
+              {[
+                ["Account", [cliente.account, cliente.accountApoyo].filter(Boolean).join(" y ")],
+                ["SEO", analistas.find((a) => a.id === cliente.analistaSeoId)?.nombre],
+                ["Paid", analistas.find((a) => a.id === cliente.analistaPaidId)?.nombre],
+                ["Email", analistas.find((a) => a.id === cliente.analistaEmailId)?.nombre],
+                ["Diseño", cliente.disenadora],
+                ["Redacción", cliente.redactora],
+              ]
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <span className="text-suave">{k}:</span> {v}
+                  </div>
+                ))}
+            </Dato>
+            {cliente.prioridad && <Dato etiqueta="Prioridad estratégica">{cliente.prioridad} de 5</Dato>}
             <Dato etiqueta="Industria">{cliente.industria}</Dato>
             <Dato etiqueta="Sitio web">
               {cliente.sitioWeb && (
@@ -261,6 +280,16 @@ export default async function ClientePage({ params, searchParams }: { params: Pr
               {cliente.trelloTablero && (
                 <a href={cliente.trelloTablero} target="_blank" rel="noreferrer" className="enlace">
                   Trello
+                </a>
+              )}
+              {cliente.lookerStudio && (
+                <a href={cliente.lookerStudio} target="_blank" rel="noreferrer" className="enlace">
+                  Looker Studio
+                </a>
+              )}
+              {cliente.blueprint && (
+                <a href={cliente.blueprint} target="_blank" rel="noreferrer" className="enlace">
+                  Blueprint
                 </a>
               )}
               {cliente.jiraProjectKey && (

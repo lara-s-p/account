@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { guardarCliente } from "@/app/acciones";
-import { ESTADOS_CLIENTE, ETIQUETAS, type Cliente, type Contacto } from "@/db/schema";
+import { ESTADOS_CLIENTE, SERVICIOS, type Cliente, type Contacto } from "@/db/schema";
 
 function Campo({ nombre, etiqueta, valor, tipo = "text", placeholder }: { nombre: string; etiqueta: string; valor?: string | null; tipo?: string; placeholder?: string }) {
   return (
@@ -31,7 +31,23 @@ function Seccion({ titulo, children }: { titulo: string; children: React.ReactNo
   );
 }
 
-export function FormCliente({ cliente, accounts }: { cliente?: Cliente; accounts: string[] }) {
+function SelectAnalista({ nombre, etiqueta, valor, analistas }: { nombre: string; etiqueta: string; valor?: number | null; analistas: { id: number; nombre: string }[] }) {
+  return (
+    <label className="block min-w-0">
+      <span className="etiqueta-campo">{etiqueta}</span>
+      <select id={nombre} name={nombre} defaultValue={valor ?? ""} className="campo">
+        <option value="">Sin asignar</option>
+        {analistas.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.nombre}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function FormCliente({ cliente, accounts, analistas }: { cliente?: Cliente; accounts: string[]; analistas: { id: number; nombre: string }[] }) {
   const [estado, accion, guardando] = useActionState(guardarCliente, undefined);
   const [contactos, setContactos] = useState<Contacto[]>(cliente?.contactos.length ? cliente.contactos : [{ nombre: "" }]);
 
@@ -58,6 +74,19 @@ export function FormCliente({ cliente, accounts }: { cliente?: Cliente; accounts
             ))}
           </datalist>
         </label>
+        <Campo nombre="accountApoyo" etiqueta="Segundo account" valor={cliente?.accountApoyo} />
+        <label className="block">
+          <span className="etiqueta-campo">Prioridad estratégica</span>
+          <select id="prioridad" name="prioridad" defaultValue={cliente?.prioridad ?? ""} className="campo">
+            <option value="">Sin definir</option>
+            {[5, 4, 3, 2, 1].map((p) => (
+              <option key={p} value={p}>
+                {p}
+                {p === 5 ? " (máxima)" : p === 1 ? " (mínima)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
         <Campo nombre="alias" etiqueta="Otros nombres (separados por coma)" valor={cliente?.alias.join(", ")} placeholder="Como aparece en minutas o en el sheet" />
       </Seccion>
 
@@ -75,7 +104,7 @@ export function FormCliente({ cliente, accounts }: { cliente?: Cliente; accounts
         <div className="sm:col-span-2">
           <span className="etiqueta-campo">Servicios</span>
           <div className="flex flex-wrap gap-4">
-            {ETIQUETAS.filter((e) => e !== "OTRO").map((s) => (
+            {SERVICIOS.map((s) => (
               <label key={s} className="flex items-center gap-2">
                 <input type="checkbox" name="servicios" value={s} defaultChecked={cliente?.servicios.includes(s)} className="accent-marca" />
                 {s}
@@ -86,6 +115,16 @@ export function FormCliente({ cliente, accounts }: { cliente?: Cliente; accounts
         <Campo nombre="feeMensual" etiqueta="Fee mensual" valor={cliente?.feeMensual} placeholder="Ej: USD 2.500" />
         <Campo nombre="fechaInicio" etiqueta="Cliente desde" valor={cliente?.fechaInicio} tipo="date" />
         <Campo nombre="frecuenciaReunion" etiqueta="Frecuencia de reunión" valor={cliente?.frecuenciaReunion} placeholder="Semanal, quincenal, mensual" />
+        <Campo nombre="plataformaEmail" etiqueta="Plataforma de email" valor={cliente?.plataformaEmail} placeholder="ICOMM, Connectif, WoowUp…" />
+      </Seccion>
+
+      <Seccion titulo="Equipo asignado">
+        <SelectAnalista nombre="analistaSeoId" etiqueta="Analista SEO" valor={cliente?.analistaSeoId} analistas={analistas} />
+        <SelectAnalista nombre="analistaPaidId" etiqueta="Analista Paid" valor={cliente?.analistaPaidId} analistas={analistas} />
+        <SelectAnalista nombre="analistaEmailId" etiqueta="Analista Email" valor={cliente?.analistaEmailId} analistas={analistas} />
+        <Campo nombre="disenadora" etiqueta="Diseño" valor={cliente?.disenadora} />
+        <Campo nombre="redactora" etiqueta="Redacción" valor={cliente?.redactora} />
+        <p className="text-xs text-suave sm:col-span-2">Las tareas nuevas se asignan primero a estos analistas según la etiqueta (SEO, Paid o Email).</p>
       </Seccion>
 
       <fieldset className="panel p-5">
@@ -114,6 +153,8 @@ export function FormCliente({ cliente, accounts }: { cliente?: Cliente; accounts
         <Campo nombre="jiraIssueType" etiqueta="Tipo de issue de Jira" valor={cliente?.jiraIssueType} />
         <Campo nombre="slackCanal" etiqueta="Canal de Slack" valor={cliente?.slackCanal} placeholder="https://app.slack.com/client/…" />
         <Campo nombre="trelloTablero" etiqueta="Tablero de Trello" valor={cliente?.trelloTablero} placeholder="https://trello.com/b/…" />
+        <Campo nombre="lookerStudio" etiqueta="Dashboard de Looker Studio" valor={cliente?.lookerStudio} tipo="url" />
+        <Campo nombre="blueprint" etiqueta="Blueprint" valor={cliente?.blueprint} tipo="url" />
       </Seccion>
 
       <fieldset className="panel p-5">

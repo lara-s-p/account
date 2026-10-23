@@ -9,6 +9,8 @@ export type TareaExtraida = {
   prioridad: "Alta" | "Media" | "Baja";
   fecha_limite: string | null;
   analista_mencionado: string | null;
+  relacionada_con: string | null;
+  motivo_relacion: string | null;
 };
 
 export type MinutaProcesada = {
@@ -35,7 +37,7 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["titulo", "descripcion", "responsable", "etiqueta", "prioridad", "fecha_limite", "analista_mencionado"],
+        required: ["titulo", "descripcion", "responsable", "etiqueta", "prioridad", "fecha_limite", "analista_mencionado", "relacionada_con", "motivo_relacion"],
         properties: {
           titulo: { type: "string" },
           descripcion: { type: "string" },
@@ -44,6 +46,8 @@ const SCHEMA = {
           prioridad: { type: "string", enum: ["Alta", "Media", "Baja"] },
           fecha_limite: { type: ["string", "null"] },
           analista_mencionado: { type: ["string", "null"] },
+          relacionada_con: { type: ["string", "null"] },
+          motivo_relacion: { type: ["string", "null"] },
         },
       },
     },
@@ -58,6 +62,8 @@ export async function procesarMinutaConClaude(opts: {
   fecha: string;
   analistas: string[];
   serviciosContratados: string[];
+  /** Tareas abiertas del cliente en Jira, para no duplicar las que se repiten. */
+  abiertas: { key: string; titulo: string; estado: string }[];
 }): Promise<MinutaProcesada> {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("Falta configurar ANTHROPIC_API_KEY para procesar minutas.");
   cliente ??= new Anthropic();
@@ -68,6 +74,9 @@ Cliente: ${opts.cliente}
 Fecha de la reunión: ${opts.fecha}
 Servicios que el cliente tiene contratados: ${opts.serviciosContratados.join(", ") || "sin datos"}
 Analistas del equipo: ${opts.analistas.join(", ")}
+
+Tareas que este cliente ya tiene abiertas en Jira:
+${opts.abiertas.length ? opts.abiertas.map((t) => `- ${t.key}: ${t.titulo} (${t.estado})`).join("\n") : "(ninguna)"}
 
 <minuta>
 ${opts.texto.slice(0, 60000)}
@@ -87,6 +96,8 @@ Devolvé:
   - prioridad según la urgencia o el impacto que se mencionó.
   - fecha_limite en formato AAAA-MM-DD solo si en la minuta se dijo una fecha o un plazo (calculala a partir de la fecha de la reunión); si no se dijo, null.
   - analista_mencionado: el nombre exacto de la lista de analistas si la minuta dice quién la hace; si no, null.
+  - relacionada_con: si la tarea es la misma o la continuación de una de las tareas abiertas en Jira de la lista de arriba, su clave (por ejemplo "ATKMKT-1056"); así se agrega como comentario en vez de crear una tarea repetida. Solo claves de esa lista; si no hay una que corresponda claramente, null.
+  - motivo_relacion: si hay relacionada_con, en una oración qué tiene de nuevo esta reunión sobre esa tarea (va como comentario en Jira); si no, null.
 No inventes tareas ni datos que no estén en la minuta.`;
 
   const respuesta = await cliente.beta.messages.create({

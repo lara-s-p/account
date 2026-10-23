@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const ITEMS = [
   { href: "/", texto: "Inicio" },
+  { href: "/bandeja", texto: "Bandeja" },
   { href: "/clientes", texto: "Clientes" },
   { href: "/reuniones", texto: "Reuniones" },
   { href: "/tareas", texto: "Tareas" },
@@ -12,7 +13,7 @@ const ITEMS = [
 
 const PROXIMAMENTE = ["Estado semanal", "Objetivos", "Pre-reunión"];
 
-export function Menu() {
+export function Menu({ enBandeja }: { enBandeja: number }) {
   const ruta = usePathname();
   return (
     <nav className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible" aria-label="Secciones">
@@ -28,6 +29,9 @@ export function Menu() {
             }`}
           >
             {i.texto}
+            {i.href === "/bandeja" && enBandeja > 0 && (
+              <span className="numeros ml-2 rounded-full bg-marca px-1.5 py-0.5 text-xs font-bold text-white">{enBandeja}</span>
+            )}
           </Link>
         );
       })}
