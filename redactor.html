@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redactor de productos | MiTienda</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/redactor.css">
+</head>
+<body>
+  <div class="topbar">🚚 Envío gratis en compras superiores a $100.000</div>
+
+  <header class="header">
+    <div class="container header-inner">
+      <a href="index.html" class="logo">Mi<span>Tienda</span></a>
+      <div class="header-actions">
+        <a href="index.html" class="back-link">← Volver a la tienda</a>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero hero-small">
+    <div class="container">
+      <h1>Redactor de productos</h1>
+      <p>Pegá el link de tu página de producto y Claude te escribe el título y la descripción.</p>
+    </div>
+  </section>
+
+  <main class="container redactor">
+    <form class="panel" id="form" novalidate>
+      <h2>Tu producto</h2>
+
+      <div class="field">
+        <label for="url">Link de la página de producto</label>
+        <input id="url" type="url" placeholder="https://tutienda.com/producto/..." required>
+      </div>
+
+      <div class="field">
+        <label for="info">Información adicional (opcional)</label>
+        <textarea id="info" placeholder="Material, medidas, talles, colores, para quién es... Si la página no se puede leer, pegá acá su contenido."></textarea>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="tone">Tono</label>
+          <select id="tone">
+            <option value="cercano">Cercano</option>
+            <option value="profesional">Profesional</option>
+            <option value="persuasivo">Persuasivo</option>
+            <option value="premium">Premium</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="length">Largo de la descripción</label>
+          <select id="length">
+            <option value="corta">Corta (1 párrafo)</option>
+            <option value="media" selected>Media (2 párrafos)</option>
+            <option value="larga">Larga (3 párrafos)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="keyword">Palabra clave (opcional)</label>
+        <input id="keyword" type="text" placeholder="Ej: zapatillas urbanas hombre">
+      </div>
+
+      <div class="field">
+        <label for="code">Código de acceso</label>
+        <input id="code" type="password" autocomplete="off" placeholder="Solo si lo configuraste en Vercel">
+      </div>
+
+      <p class="notice" id="notice" hidden></p>
+
+      <button class="btn" id="submit" type="submit">Redactar título y descripción</button>
+    </form>
+
+    <section class="panel" aria-live="polite">
+      <div class="out-head">
+        <h2>Texto generado</h2>
+        <span class="pill" id="badge">Ejemplo</span>
+      </div>
+      <p class="status" id="status" hidden><span class="spinner"></span>Leyendo la página y redactando...</p>
+
+      <div class="out">
+        <div class="out-head"><span class="label">Título</span><span class="out-actions"><span class="count" id="title-count"></span><button type="button" class="btn-ghost" data-copy="titulo">Copiar</button></span></div>
+        <p class="title-out" id="out-titulo"></p>
+      </div>
+      <div class="out">
+        <div class="out-head"><span class="label">Descripción</span><button type="button" class="btn-ghost" data-copy="descripcion">Copiar</button></div>
+        <p class="desc-out" id="out-descripcion"></p>
+      </div>
+      <div class="out" id="puntos-block">
+        <div class="out-head"><span class="label">Puntos clave</span><button type="button" class="btn-ghost" data-copy="puntos">Copiar</button></div>
+        <ul class="bullets" id="out-puntos"></ul>
+      </div>
+      <div class="out">
+        <div class="out-head"><span class="label">Meta descripción (Google)</span><span class="out-actions"><span class="count" id="meta-count"></span><button type="button" class="btn-ghost" data-copy="meta">Copiar</button></span></div>
+        <p class="meta-out" id="out-meta"></p>
+      </div>
+      <div class="out" id="faltantes-block" hidden>
+        <div class="out-head"><span class="label">Datos que conviene agregar</span></div>
+        <ul class="gaps" id="out-faltantes"></ul>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="js/redactor.js"></script>
+</body>
+</html>
