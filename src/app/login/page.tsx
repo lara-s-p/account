@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { DOMINIO, signIn } from "@/auth";
 import { usuarioActual } from "@/lib/sesion";
+import { ConfiguracionPendiente } from "@/components/ConfiguracionPendiente";
+import { configuracionPendiente } from "@/lib/configuracion";
 
 export const metadata = { title: "Ingresar" };
 
 export default async function Login({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  await connection();
+  const config = configuracionPendiente();
+  if (config.faltan.length) return <ConfiguracionPendiente estado={config} />;
   if (await usuarioActual()) redirect("/");
   const { error } = await searchParams;
   return (

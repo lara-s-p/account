@@ -1,9 +1,16 @@
+import { connection } from "next/server";
 import { signOut } from "@/auth";
 import { Menu } from "@/components/Menu";
+import { ConfiguracionPendiente } from "@/components/ConfiguracionPendiente";
+import { configuracionPendiente } from "@/lib/configuracion";
 import { contarBandeja } from "@/lib/consultas";
 import { MODO_DESARROLLO, requerirUsuario } from "@/lib/sesion";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // Todo se arma en cada visita, con los datos de la base: nada se genera durante el build.
+  await connection();
+  const config = configuracionPendiente();
+  if (config.faltan.length) return <ConfiguracionPendiente estado={config} />;
   const usuario = await requerirUsuario();
   const enBandeja = await contarBandeja();
   return (
