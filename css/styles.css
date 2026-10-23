@@ -1,7 +1,7 @@
 :root {
-  --primary: #4f46e5;
-  --primary-dark: #3730a3;
-  --accent: #f59e0b;
+  --primary: #fa5a1e;
+  --primary-dark: #c8410f;
+  --accent: #1f2937;
   --text: #1f2937;
   --muted: #6b7280;
   --bg: #f9fafb;
@@ -138,7 +138,7 @@ button { font: inherit; cursor: pointer; }
 
 /* Banner */
 .hero {
-  background: linear-gradient(120deg, var(--primary) 0%, #7c3aed 100%);
+  background: linear-gradient(120deg, var(--primary) 0%, var(--primary-dark) 100%);
   color: #fff;
   padding: 56px 0;
 }
@@ -189,7 +189,7 @@ button { font: inherit; cursor: pointer; }
   display: grid;
   place-items: center;
   font-size: 4rem;
-  background: #eef2ff;
+  background: #fff1e8;
 }
 .card-body { padding: 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .card-cat { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
