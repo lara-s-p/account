@@ -1,0 +1,319 @@
+"use server";
+
+import { and, eq, sql } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { getDb } from "@/db";
+import {
+  analistas,
+  clientes,
+  DECISIONES,
+  ESTADOS_CLIENTE,
+  ESTADOS_TAREA,
+  ETIQUETAS,
+  PRIORIDADES,
+  RESPONSABLES,
+  reuniones,
+  tareaEventos,
+  tareas,
+  type Contacto,
+} from "@/db/schema";
+import { sugerenciasAnalista } from "@/lib/consultas";
+import { fechaCorta } from "@/lib/fechas";
+import { leerGoogleDoc } from "@/lib/google-docs";
+import { procesarMinutaConClaude } from "@/lib/minuta";
+import { requerirUsuario } from "@/lib/sesion";
+import { claveNombre, formatoId } from "@/lib/texto";
+
+type DB = Awaited<ReturnType<typeof getDb>>;
+
+async function siguienteId(db: DB, tabla: "clientes" | "reuniones" | "tareas", prefijo: string, ancho: number) {
+  const t = { clientes, reuniones, tareas }[tabla];
+  const [{ max }] = await db.select({ max: sql<number>`coalesce(max(substring(${t.id} from '[0-9]+$')::int), 0)` }).from(t);
+  return (n = 1) => formatoId(prefijo, Number(max) + n, ancho);
+}
+
+const texto = (fd: FormData, k: string) => {
+  const v = String(fd.get(k) ?? "").trim();
+  return v || null;
+};
+
+/* ===================== Clientes ===================== */
+
+export type EstadoFormulario = { error?: string; ok?: string } | undefined;
+
+export async function guardarCliente(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const id = texto(fd, "id");
+  const nombre = texto(fd, "nombre");
+  if (!nombre) return { error: "El nombre del cliente es obligatorio." };
+
+  const nombres = fd.getAll("contacto_nombre").map(String);
+  const contactos: Contacto[] = nombres
+    .map((n, i) => ({
+      nombre: n.trim(),
+      cargo: String(fd.getAll("contacto_cargo")[i] ?? "").trim() || undefined,
+      email: String(fd.getAll("contacto_email")[i] ?? "").trim() || undefined,
+      telefono: String(fd.getAll("contacto_telefono")[i] ?? "").trim() || undefined,
+    }))
+    .filter((c) => c.nombre);
+  const estado = texto(fd, "estado") ?? "Revisar";
+  const datos = {
+    nombre,
+    alias: String(fd.get("alias") ?? "").split(",").map((a) => a.trim()).filter(Boolean),
+    estado: (ESTADOS_CLIENTE as readonly string[]).includes(estado) ? estado : "Revisar",
+    account: texto(fd, "account"),
+    industria: texto(fd, "industria"),
+    pais: texto(fd, "pais"),
+    sitioWeb: texto(fd, "sitioWeb"),
+    plataformaEcommerce: texto(fd, "plataformaEcommerce"),
+    descripcionNegocio: texto(fd, "descripcionNegocio"),
+    objetivosNegocio: texto(fd, "objetivosNegocio"),
+    competidores: texto(fd, "competidores"),
+    servicios: fd.getAll("servicios").map(String).filter((s) => (ETIQUETAS as readonly string[]).includes(s)),
+    feeMensual: texto(fd, "feeMensual"),
+    fechaInicio: texto(fd, "fechaInicio"),
+    frecuenciaReunion: texto(fd, "frecuenciaReunion"),
+    contactos,
+    jiraProjectKey: texto(fd, "jiraProjectKey"),
+    jiraProjectId: texto(fd, "jiraProjectId"),
+    jiraIssueType: texto(fd, "jiraIssueType"),
+    slackCanal: texto(fd, "slackCanal"),
+    trelloTablero: texto(fd, "trelloTablero"),
+    notas: texto(fd, "notas"),
+    actualizadoEn: new Date(),
+  };
+
+  const todos = await db.select({ id: clientes.id, nombre: clientes.nombre }).from(clientes);
+  if (todos.some((c) => c.id !== id && claveNombre(c.nombre) === claveNombre(nombre))) {
+    return { error: `Ya existe un cliente llamado "${nombre}".` };
+  }
+
+  let destino = id;
+  if (id) {
+    await db.update(clientes).set(datos).where(eq(clientes.id, id));
+  } else {
+    destino = (await siguienteId(db, "clientes", "CLI", 3))();
+    await db.insert(clientes).values({ ...datos, id: destino });
+  }
+  console.info(`Cliente ${destino} guardado por ${usuario.email}`);
+  revalidatePath("/clientes");
+  revalidatePath(`/clientes/${destino}`);
+  if (!id) redirect(`/clientes/${destino}`);
+  return { ok: "Ficha guardada." };
+}
+
+/* ===================== Tareas ===================== */
+
+const CAMPOS_TAREA = {
+  decision: DECISIONES,
+  estado: ESTADOS_TAREA,
+  etiqueta: ETIQUETAS,
+  prioridad: PRIORIDADES,
+  responsable: RESPONSABLES,
+} as const;
+
+type CampoEditable = keyof typeof CAMPOS_TAREA | "analistaId" | "fechaLimite" | "titulo" | "descripcion" | "objetivo";
+
+export async function actualizarTarea(id: string, campo: CampoEditable, valor: string | null): Promise<{ error?: string }> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const [tarea] = await db.select().from(tareas).where(eq(tareas.id, id));
+  if (!tarea) return { error: "La tarea no existe." };
+
+  const v = valor?.trim() || null;
+  const cambios: Partial<typeof tareas.$inferInsert> = { actualizadoEn: new Date() };
+  let anterior: string | null = null;
+  let nuevo: string | null = v;
+
+  if (campo in CAMPOS_TAREA) {
+    const opciones = CAMPOS_TAREA[campo as keyof typeof CAMPOS_TAREA] as readonly string[];
+    if (v && !opciones.includes(v)) return { error: "Valor no válido." };
+    if (!v && campo !== "etiqueta") return { error: "Elegí un valor." };
+    anterior = tarea[campo as keyof typeof CAMPOS_TAREA];
+    Object.assign(cambios, { [campo]: v });
+    if (campo === "decision") {
+      cambios.fechaDecision = v === "Pendiente" ? null : new Date();
+      if (v === "Cargar" && tarea.estado === "Sin seguimiento") cambios.estado = "Por hacer";
+    }
+    if (campo === "estado") cambios.fechaCierre = v === "Hecha" ? new Date() : null;
+  } else if (campo === "analistaId") {
+    const lista = await db.select({ id: analistas.id, nombre: analistas.nombre }).from(analistas);
+    const nombre = (n: number | null) => lista.find((a) => a.id === n)?.nombre ?? null;
+    const nuevoId = v ? Number(v) : null;
+    if (nuevoId && !nombre(nuevoId)) return { error: "El analista no existe." };
+    anterior = nombre(tarea.analistaId);
+    nuevo = nombre(nuevoId);
+    cambios.analistaId = nuevoId;
+  } else if (campo === "fechaLimite") {
+    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { error: "Fecha no válida." };
+    anterior = tarea.fechaLimite;
+    cambios.fechaLimite = v;
+  } else if (campo === "titulo" || campo === "descripcion" || campo === "objetivo") {
+    if (campo === "titulo" && !v) return { error: "El título no puede quedar vacío." };
+    anterior = tarea[campo];
+    Object.assign(cambios, { [campo]: v });
+  } else {
+    return { error: "Campo no editable." };
+  }
+
+  if ((anterior ?? null) === (nuevo ?? null)) return {};
+  await db.update(tareas).set(cambios).where(eq(tareas.id, id));
+  await db.insert(tareaEventos).values({ tareaId: id, usuario: usuario.nombre, tipo: "cambio", campo, valorAnterior: anterior, valorNuevo: nuevo });
+  revalidatePath("/tareas");
+  revalidatePath(`/tareas/${id}`);
+  if (tarea.reunionId) revalidatePath(`/reuniones/${tarea.reunionId}`);
+  return {};
+}
+
+export async function comentarTarea(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
+  const usuario = await requerirUsuario();
+  const id = texto(fd, "id");
+  const comentario = texto(fd, "comentario");
+  if (!id || !comentario) return { error: "Escribí un comentario." };
+  const db = await getDb();
+  await db.insert(tareaEventos).values({ tareaId: id, usuario: usuario.nombre, tipo: "comentario", comentario });
+  revalidatePath(`/tareas/${id}`);
+  return { ok: "Comentario agregado." };
+}
+
+export async function crearTarea(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const clienteId = texto(fd, "clienteId");
+  const titulo = texto(fd, "titulo");
+  if (!clienteId || !titulo) return { error: "Elegí el cliente y escribí el título." };
+  const etiqueta = texto(fd, "etiqueta");
+  const responsable = texto(fd, "responsable") ?? "Known";
+  const sugerir = await sugerenciasAnalista(clienteId);
+  const analistaElegido = texto(fd, "analistaId");
+  const id = (await siguienteId(db, "tareas", "TAR", 6))();
+  await db.insert(tareas).values({
+    id,
+    clienteId,
+    reunionId: texto(fd, "reunionId"),
+    titulo,
+    descripcion: texto(fd, "descripcion"),
+    responsable,
+    etiqueta,
+    analistaId: analistaElegido ? Number(analistaElegido) : responsable === "Known" ? sugerir(etiqueta) : null,
+    analistaSugeridoId: sugerir(etiqueta),
+    prioridad: texto(fd, "prioridad") ?? "Media",
+    fechaLimite: texto(fd, "fechaLimite"),
+  });
+  await db.insert(tareaEventos).values({ tareaId: id, usuario: usuario.nombre, tipo: "creada", comentario: "Creada a mano" });
+  revalidatePath("/tareas");
+  redirect(`/tareas/${id}`);
+}
+
+/* ===================== Reuniones ===================== */
+
+export async function cargarReunion(_prev: EstadoFormulario, fd: FormData): Promise<EstadoFormulario> {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const clienteId = texto(fd, "clienteId");
+  const fecha = texto(fd, "fecha");
+  const linkDoc = texto(fd, "linkDoc");
+  let textoMinuta = texto(fd, "texto");
+  if (!clienteId || !fecha) return { error: "Elegí el cliente y la fecha de la reunión." };
+  if (!linkDoc && !textoMinuta) return { error: "Pegá el link de la minuta o su texto." };
+
+  const [cliente] = await db.select().from(clientes).where(eq(clientes.id, clienteId));
+  if (!cliente) return { error: "El cliente no existe." };
+  if (linkDoc) {
+    const [repetida] = await db.select({ id: reuniones.id }).from(reuniones).where(eq(reuniones.linkDoc, linkDoc));
+    if (repetida) return { error: `Esa minuta ya está cargada (${repetida.id}).` };
+  }
+
+  try {
+    if (!textoMinuta && linkDoc) {
+      if (!usuario.googleAccessToken) {
+        return { error: "Para leer el documento hace falta tu sesión de Google. Cerrá sesión y volvé a entrar, o pegá el texto de la minuta." };
+      }
+      textoMinuta = await leerGoogleDoc(linkDoc, usuario.googleAccessToken);
+    }
+    const listaAnalistas = await db.select().from(analistas).where(eq(analistas.activo, true));
+    const resultado = await procesarMinutaConClaude({
+      texto: textoMinuta!,
+      cliente: cliente.nombre,
+      fecha,
+      analistas: listaAnalistas.map((a) => a.nombre),
+      serviciosContratados: cliente.servicios,
+    });
+
+    const sugerir = await sugerenciasAnalista(clienteId);
+    const porNombre = new Map(listaAnalistas.map((a) => [claveNombre(a.nombre), a.id]));
+    const idReunion = (await siguienteId(db, "reuniones", "REU", 6))();
+    const idTarea = await siguienteId(db, "tareas", "TAR", 6);
+
+    await db.transaction(async (tx) => {
+      await tx.insert(reuniones).values({
+        id: idReunion,
+        clienteId,
+        fecha,
+        tipo: texto(fd, "tipo"),
+        linkDoc,
+        textoMinuta,
+        procesada: true,
+        resumen: resultado.resumen,
+        decisiones: resultado.decisiones,
+        compromisosCliente: resultado.tareas.filter((t) => t.responsable === "Cliente").map((t) => t.titulo),
+        oportunidades: resultado.oportunidades,
+        riesgos: resultado.riesgos,
+        tonoCliente: resultado.tono_cliente,
+        creadoPor: usuario.email,
+      });
+      if (resultado.tareas.length) {
+        const filas = resultado.tareas.map((t, i) => {
+          const sugerido = sugerir(t.etiqueta);
+          const mencionado = t.analista_mencionado ? porNombre.get(claveNombre(t.analista_mencionado)) : undefined;
+          const fechaValida = t.fecha_limite && /^\d{4}-\d{2}-\d{2}$/.test(t.fecha_limite) ? t.fecha_limite : null;
+          return {
+            id: idTarea(i + 1),
+            clienteId,
+            reunionId: idReunion,
+            titulo: t.titulo,
+            descripcion: t.descripcion,
+            responsable: t.responsable,
+            etiqueta: t.etiqueta,
+            prioridad: t.prioridad,
+            fechaLimite: fechaValida,
+            analistaSugeridoId: t.responsable === "Known" ? sugerido : null,
+            analistaId: t.responsable === "Known" ? mencionado ?? sugerido : null,
+          };
+        });
+        await tx.insert(tareas).values(filas);
+        await tx.insert(tareaEventos).values(
+          filas.map((t) => ({ tareaId: t.id, usuario: usuario.nombre, tipo: "creada", comentario: `Generada de la minuta del ${fechaCorta(fecha)}` }))
+        );
+      }
+    });
+    revalidatePath("/reuniones");
+    revalidatePath(`/clientes/${clienteId}`);
+    redirect(`/reuniones/${idReunion}`);
+  } catch (e) {
+    if (e && typeof e === "object" && "digest" in e && String((e as { digest: unknown }).digest).startsWith("NEXT_REDIRECT")) throw e;
+    console.error("Error al procesar la minuta", e);
+    return { error: e instanceof Error ? e.message : "No se pudo procesar la minuta. Probá de nuevo." };
+  }
+}
+
+/** Aplica la misma decisión a todas las tareas pendientes de una reunión. */
+export async function decidirPendientes(reunionId: string, decision: "Cargar" | "No cargar") {
+  const usuario = await requerirUsuario();
+  const db = await getDb();
+  const pendientes = await db
+    .select({ id: tareas.id, estado: tareas.estado })
+    .from(tareas)
+    .where(and(eq(tareas.reunionId, reunionId), eq(tareas.decision, "Pendiente")));
+  if (!pendientes.length) return;
+  for (const t of pendientes) {
+    await db.update(tareas).set({ decision, fechaDecision: new Date(), actualizadoEn: new Date() }).where(eq(tareas.id, t.id));
+  }
+  await db.insert(tareaEventos).values(
+    pendientes.map((t) => ({ tareaId: t.id, usuario: usuario.nombre, tipo: "cambio", campo: "decision", valorAnterior: "Pendiente", valorNuevo: decision }))
+  );
+  revalidatePath(`/reuniones/${reunionId}`);
+  revalidatePath("/tareas");
+}

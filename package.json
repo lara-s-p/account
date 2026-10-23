@@ -1,13 +1,42 @@
 {
-  "name": "mitienda",
-  "version": "1.0.0",
+  "name": "account-known",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Tienda online de prueba con redactor de productos usando Claude",
+  "description": "Plataforma de Account MKT de Known Online: clientes, reuniones, tareas y estado de cartera",
+  "scripts": {
+    "dev": "next dev",
+    "build": "tsx scripts/migrar.ts && next build",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrar.ts",
+    "importar": "tsx scripts/importar-sheet.ts"
+  },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.2.0"
+    "@anthropic-ai/sdk": "1.2.0",
+    "@electric-sql/pglite": "0.5.11",
+    "drizzle-orm": "0.45.4",
+    "exceljs": "4.4.0",
+    "next": "16.4.3",
+    "next-auth": "5.0.0-beta.32",
+    "postgres": "3.4.9",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
   }
 }
